@@ -1,7 +1,9 @@
 lazy val root = (project in file("."))
   .settings(common: _*)
   .settings(
-    name := "typesafe-markdown"
+    name := "typesafe-markdown",
+    publish := {},
+    publishTo := None
   ).aggregate(server, plugin)
 
 lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.3.0"
@@ -35,7 +37,13 @@ lazy val plugin = (project in file("plugin"))
 
 
 def common: Seq[Setting[_]] = Seq(
-  organization := "com.typesafe.markdown"
+  organization := "com.typesafe.markdown",
+
+  licenses := Seq("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.html")),
+  bintrayOrganization := Some("typesafe"),
+  bintrayRepository := "ivy-releases",
+  bintrayPackage := "typesafe-markdown",
+  bintrayReleaseOnPublish := false
 )
 
 def generateVersionFile = Def.task {
@@ -45,5 +53,4 @@ def generateVersionFile = Def.task {
   IO.write(file, content)
   Seq(file)
 }
-
 
