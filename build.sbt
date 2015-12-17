@@ -43,7 +43,8 @@ def common: Seq[Setting[_]] = Seq(
   bintrayOrganization := Some("typesafe"),
   bintrayRepository := "ivy-releases",
   bintrayPackage := "typesafe-markdown",
-  bintrayReleaseOnPublish := false
+  bintrayReleaseOnPublish := false,
+  publishMavenStyle := false
 )
 
 def generateVersionFile = Def.task {
