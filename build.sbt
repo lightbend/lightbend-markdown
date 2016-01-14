@@ -30,7 +30,11 @@ lazy val plugin = (project in file("plugin"))
   .settings(common: _*)
   .settings(
     name := "sbt-typesafe-markdown",
-    libraryDependencies += playDoc,
+    libraryDependencies ++= Seq(
+      "com.github.seratch" %% "awscala" % "0.5.5",
+      "org.webjars" % "webjars-locator-core" % "0.30",
+      playDoc
+    ),
     sbtPlugin := true,
     resourceGenerators in Compile <+= generateVersionFile
   )

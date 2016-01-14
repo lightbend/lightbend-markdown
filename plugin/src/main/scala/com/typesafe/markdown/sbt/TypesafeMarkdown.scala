@@ -3,7 +3,12 @@
  */
 package com.typesafe.markdown.sbt
 
+import java.net.URLClassLoader
+
+import awscala.{Region0, Region}
 import com.typesafe.markdown.sbt.TypesafeMarkdownValidation._
+import org.apache.commons.codec.digest.DigestUtils
+import org.webjars.{FileSystemCache, WebJarExtractor}
 import sbt._
 import sbt.Keys._
 import sbt.plugins.JvmPlugin
@@ -11,6 +16,7 @@ import sbt.plugins.JvmPlugin
 import scala.util.control.NonFatal
 
 object TypesafeMarkdownKeys {
+  val markdownDocsTitle = settingKey[String]("The title of the documentation")
   val markdownManualPath = settingKey[File]("The location of the manual")
   val markdownDocPaths = taskKey[Seq[(File, String)]]("The paths to include in the documentation")
   val markdownApiDocs = settingKey[Seq[(String, String)]]("The API docs links to render")
@@ -18,6 +24,16 @@ object TypesafeMarkdownKeys {
   val markdownValidateExternalLinks = taskKey[Seq[String]]("Validates that all the external links are valid, by checking that they return 200.")
   val markdownGenerateRefReport = taskKey[MarkdownRefReport]("Parses all markdown files and generates a report of references")
   val markdownGenerateCodeSamplesReport = taskKey[CodeSamplesReport]("Parses all markdown files and generates a report of code samples used")
+  val markdownGenerateAllDocumentation = taskKey[File]("Generate all the documentation")
+  val markdownExtractWebJars = taskKey[File]("Extract all the documentation webjars")
+
+  val markdownS3PublishDocs = taskKey[Unit]("Publish the documentation to S3")
+  val markdownS3Bucket = settingKey[Option[String]]("The S3 bucket to publish to")
+  val markdownS3Prefix = settingKey[String]("The S3 directory to publish to")
+  val markdownS3CredentialsHost = settingKey[String]("The S3 credentials host to get credentials for")
+  val markdownS3Region = settingKey[Region]("The AWS region to use")
+  val markdownS3DeletionThreshold = settingKey[Int]("The maximum number of files to delete when cleaning up, if this is exceeded, the upload will abort")
+  val markdownContentTypes = settingKey[Map[String, String]]("A map of file name extensions to content types, used to tell S3 what content type a file should be.")
 
   val markdownEvaluateSbtFiles = taskKey[Unit]("Evaluate all the sbt files in the project")
 
@@ -38,6 +54,7 @@ object TypesafeMarkdown extends AutoPlugin {
 
   def docsRunSettings = Seq(
     ivyConfigurations += RunMarkdown,
+    markdownDocsTitle := name.value,
     markdownManualPath := baseDirectory.value / "manual",
     markdownDocPaths := Seq(markdownManualPath.value -> "."),
     markdownApiDocs := Seq(
@@ -51,7 +68,23 @@ object TypesafeMarkdown extends AutoPlugin {
     libraryDependencies ++= Seq(
       "com.typesafe.markdown" % "typesafe-markdown-server_2.11" %
         readResourceProperty("typesafe-markdown.version.properties", "typesafe-markdown.version") % RunMarkdown.name
-    )
+    ),
+
+    target in markdownGenerateAllDocumentation := target.value / "markdown-site",
+    markdownGenerateAllDocumentation <<= markdownGenerateAllDocumentationSetting,
+    markdownContentTypes := ContentTypes,
+    target in markdownExtractWebJars := target.value / "markdown-webjars",
+    markdownExtractWebJars <<= markdownExtractWebJarsSetting,
+
+    markdownS3PublishDocs <<= markdownS3PublishDocsSetting,
+    markdownS3Bucket := None,
+    // The reason we don't default this to no prefix is because otherwise, it would delete everything in the bucket if
+    // someone forgot to configure it, which obviously we don't want.
+    markdownS3Prefix := "please/configure/markdown/s3/prefix/",
+    markdownS3CredentialsHost := "s3.amazonaws.com",
+    markdownS3Region := Region0.US_EAST_1,
+    markdownS3DeletionThreshold := 30,
+    includeFilter in markdownS3PublishDocs := "*"
   )
 
   def docsTestSettings = Seq(
@@ -88,7 +121,7 @@ object TypesafeMarkdown extends AutoPlugin {
     testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "--ignore-runners=org.specs2.runner.JUnitRunner")
   )
 
-  val docsJarFileSetting: Def.Initialize[Task[Option[File]]] = Def.task {
+  private val docsJarFileSetting: Def.Initialize[Task[Option[File]]] = Def.task {
     val jars = update.value.matching(configurationFilter("docs") && artifactFilter(`type` = "jar")).toList
     jars match {
       case Nil =>
@@ -103,7 +136,7 @@ object TypesafeMarkdown extends AutoPlugin {
   }
 
   // Run a documentation server
-  val docsRunSetting: Def.Initialize[InputTask[Unit]] = Def.inputTask {
+  private val docsRunSetting: Def.Initialize[InputTask[Unit]] = Def.inputTask {
     val args = Def.spaceDelimited().parsed
     val port = args.headOption.getOrElse("9000")
 
@@ -120,7 +153,7 @@ object TypesafeMarkdown extends AutoPlugin {
       "com.typesafe.markdown.server.DocumentationServer",
       "-p", port,
       "-d", docPathsOption,
-      "-n", name.value,
+      "-n", markdownDocsTitle.value,
       "-a", apiDocsOptions
     )
 
@@ -133,6 +166,162 @@ object TypesafeMarkdown extends AutoPlugin {
     waitForKey()
 
     process.destroy()
+  }
+
+  private val markdownGenerateAllDocumentationSetting = Def.task {
+    val ct = (classpathTypes in RunMarkdown).value
+    val report = update.value
+
+    val classpath = Classpaths.managedJars(RunMarkdown, ct, report)
+    val classpathOption = Path.makeString(classpath.map(_.data))
+
+    val docPathsOption = markdownDocPaths.value.map(p => p._1.getAbsolutePath + "=" + p._2).mkString(",")
+    val apiDocsOptions = markdownApiDocs.value.map(a => a._1 + "=" + a._2).mkString(",")
+    val outputDir = (target in markdownGenerateAllDocumentation).value
+
+    val options = Seq(
+      "-classpath", classpathOption,
+      "com.typesafe.markdown.generator.GenerateSite",
+      "-d", docPathsOption,
+      "-n", markdownDocsTitle.value,
+      "-a", apiDocsOptions,
+      "-o", outputDir.getAbsolutePath
+    )
+
+    val process = Fork.java.fork(ForkOptions(), options)
+
+    if (process.exitValue() != 0) {
+      sys.error("GenerateSite failed: " + process.exitValue())
+    }
+
+    outputDir
+  }
+
+
+  private val markdownExtractWebJarsSetting = Def.task {
+    val ct = (classpathTypes in RunMarkdown).value
+    val report = update.value
+
+    val classpath = Classpaths.managedJars(RunMarkdown, ct, report)
+    val classloader = new URLClassLoader(classpath.map(_.data.toURI.toURL).toArray, null)
+
+    val outputDir = (target in markdownExtractWebJars).value
+    val extractor = new WebJarExtractor(new FileSystemCache(streams.value.cacheDirectory / "markdown-extract-webjars"), classloader)
+
+    extractor.extractAllWebJarsTo(outputDir)
+    classloader.close()
+
+    outputDir
+  }
+
+  private val markdownS3PublishDocsSetting = Def.task {
+
+    import awscala.s3.{S3ObjectSummary, S3}
+    import com.amazonaws.services.s3.model.{ ListObjectsRequest, ObjectListing, DeleteObjectsRequest, ObjectMetadata }
+    import scala.collection.JavaConverters._
+
+    val s3Prefix = markdownS3Prefix.value
+    val log = streams.value.log
+    val deleteThreshold = markdownS3DeletionThreshold.value
+
+    val allDocsDir = markdownGenerateAllDocumentation.value
+    val generatedDocMappings = (allDocsDir.***.filter(!_.isDirectory).get pair relativeTo(allDocsDir)) map {
+      case (file, path) => (s3Prefix + path, (file, Some("text/html; charset=utf8")))
+    }
+    val docPathMappings = markdownDocPaths.value.flatMap {
+      case (path, prefix) =>
+        val p = if (prefix == ".") "" else if (prefix.endsWith("/")) prefix else prefix + "/"
+        val files = path.descendantsExcept((includeFilter in markdownS3PublishDocs).value, (excludeFilter in markdownS3PublishDocs).value).get
+        files.filterNot(_.isDirectory) pair relativeTo(path) map {
+          case (file, mapping) => file -> (p + mapping)
+        }
+    } map {
+      case (file, path) =>
+        val key = if (path.startsWith("api/")) {
+          s3Prefix + path
+        } else {
+          s3Prefix + "resources/" + path
+        }
+        (key, (file, detectContentType(markdownContentTypes.value, file.getName)))
+    }
+    val webJarsDir = markdownExtractWebJars.value
+    val webJarMappings = (webJarsDir.***.filter(!_.isDirectory).get pair relativeTo(webJarsDir)) map {
+      case (file, path) => (s3Prefix + "webjars/" + path, (file, detectContentType(markdownContentTypes.value, file.getName)))
+    }
+
+    val allMappings = generatedDocMappings ++ docPathMappings ++ webJarMappings
+    val allMappingsMap = allMappings.toMap
+
+    val s3Credentials = Credentials.forHost(credentials.value, markdownS3CredentialsHost.value)
+      .getOrElse(sys.error("No credentials found for " + markdownS3CredentialsHost.value))
+
+    implicit val region = markdownS3Region.value
+    val s3 = S3(s3Credentials.userName, s3Credentials.passwd)
+    val bucketName = markdownS3Bucket.value.getOrElse(sys.error("No S3 bucket configured, you need to set markdownS3Bucket"))
+    val bucket = s3.bucket(bucketName).getOrElse(sys.error(s"S3 bucket $bucketName not found"))
+
+    def listObjects(prefix: String): Vector[S3ObjectSummary] = {
+
+      val request = new ListObjectsRequest().withBucketName(bucket.getName).withPrefix(prefix)
+
+      def completeStream(listing: ObjectListing, nextPage: Int): Vector[S3ObjectSummary] = {
+        val objects = listing.getObjectSummaries.asScala.map(S3ObjectSummary(bucket, _)).toVector
+
+        objects ++ (if (listing.isTruncated) {
+          log.info(s"Getting page $nextPage of object listing...")
+          completeStream(s3.listNextBatchOfObjects(listing), nextPage + 1)
+        } else Vector.empty)
+      }
+
+      log.info("Getting page 1 of object listing...")
+      val firstListing = s3.listObjects(request)
+      completeStream(firstListing, 2)
+    }
+
+    val allObjects = listObjects(markdownS3Prefix.value)
+    val allObjectsMap = allObjects.map(o => o.getKey -> o).toMap
+
+    val toDelete = allObjects.filterNot { obj =>
+      allMappingsMap.contains(obj.getKey)
+    }
+    val (existingFiles, newFiles) = allMappings.partition {
+      case (key, _) => allObjectsMap.contains(key)
+    }
+    val (inSync, toUpdate) = existingFiles.partition {
+      case (key, (file, _)) => allObjectsMap(key).getETag == md5(file)
+    }
+
+    def putFile(key: String, file: File, contentType: Option[String]): Unit = {
+      val metaData = new ObjectMetadata()
+      contentType.foreach(metaData.setContentType)
+      metaData.setContentLength(file.length())
+      s3.putObject(bucket, key, IO.readBytes(file), metaData)
+    }
+
+    // Sanity check
+    if (toDelete.size > deleteThreshold) {
+      log.error(s"Requested syncing to bucket $bucketName to folder $s3Prefix, but this will mean deleting ${toDelete.size} files that exist there and are not needed. You probably have misconfigured the prefix. If not, please manually clean up the folder first. Aborting.")
+      sys.error("Aborting potentially too destructive operation.")
+    }
+
+    newFiles.foreach {
+      case (key, (file, contentType)) =>
+        log.info(s"Uploading $key...")
+        putFile(key, file, contentType)
+    }
+    toUpdate.foreach {
+      case (key, (file, contentType)) =>
+        log.info(s"Updating $key...")
+        putFile(key, file, contentType)
+    }
+    if (toDelete.nonEmpty) {
+      log.info(s"Cleaning up ${toDelete.size} old files...")
+      val deleteReq = new DeleteObjectsRequest(bucketName).withKeys(toDelete.map(_.getKey): _*)
+      s3.deleteObjects(deleteReq)
+    }
+
+    log.info("Documentation sync complete!")
+    log.info(s"Uploaded ${newFiles.size} new files, updated ${toUpdate.size} existing files, deleted ${toDelete.size} old files, and ${inSync.size} files were in sync.")
   }
 
   private lazy val consoleReader = {
@@ -166,6 +355,27 @@ object TypesafeMarkdown extends AutoPlugin {
     catch { case e: Exception => }
     finally { if (stream ne null) stream.close }
     props.getProperty(property)
+  }
+
+  private def detectContentType(contentTypes: Map[String, String], name: String): Option[String] = {
+    val extension = name.split('.').last
+    contentTypes.get(extension)
+  }
+
+  private val ContentTypes = Map(
+    "html" -> "text/html; charset=utf8",
+    "css" -> "text/css; charset=utf8",
+    "js" -> "application/javascript",
+    "txt" -> "text/plain; charset=utf8",
+    "png" -> "image/png",
+    "jpg" -> "image/jpeg",
+    "gif" -> "image/gif",
+    "ico" -> "image/x-icon",
+    "pdf" -> "application/pdf"
+  )
+
+  private def md5(file: File): String = {
+    DigestUtils.md5Hex(IO.readBytes(file))
   }
 
 }
