@@ -1,12 +1,12 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
-package com.typesafe.markdown.sbt
+package com.lightbend.markdown.sbt
 
 import java.net.URLClassLoader
 
 import awscala.{Region0, Region}
-import com.typesafe.markdown.sbt.TypesafeMarkdownValidation._
+import com.lightbend.markdown.sbt.LightbendMarkdownValidation.{CodeSamplesReport, MarkdownRefReport}
 import org.apache.commons.codec.digest.DigestUtils
 import org.webjars.{FileSystemCache, WebJarExtractor}
 import sbt._
@@ -15,17 +15,20 @@ import sbt.plugins.JvmPlugin
 
 import scala.util.control.NonFatal
 
-object TypesafeMarkdownKeys {
+object LightbendMarkdownKeys {
   val markdownDocsTitle = settingKey[String]("The title of the documentation")
   val markdownManualPath = settingKey[File]("The location of the manual")
   val markdownDocPaths = taskKey[Seq[(File, String)]]("The paths to include in the documentation")
   val markdownApiDocs = settingKey[Seq[(String, String)]]("The API docs links to render")
+  val markdownTheme = settingKey[Option[String]]("The markdown theme object")
+  val markdownUseBuiltinTheme = settingKey[Boolean]("Whether the builtin markdown theme should be used")
   val markdownValidateDocs = taskKey[Unit]("Validates the play docs to ensure they compile and that all links resolve.")
   val markdownValidateExternalLinks = taskKey[Seq[String]]("Validates that all the external links are valid, by checking that they return 200.")
   val markdownGenerateRefReport = taskKey[MarkdownRefReport]("Parses all markdown files and generates a report of references")
   val markdownGenerateCodeSamplesReport = taskKey[CodeSamplesReport]("Parses all markdown files and generates a report of code samples used")
   val markdownGenerateAllDocumentation = taskKey[File]("Generate all the documentation")
   val markdownExtractWebJars = taskKey[File]("Extract all the documentation webjars")
+  val markdownStageSite = taskKey[File]("Stage the markdown site")
 
   val markdownS3PublishDocs = taskKey[Unit]("Publish the documentation to S3")
   val markdownS3Bucket = settingKey[Option[String]]("The S3 bucket to publish to")
@@ -40,11 +43,11 @@ object TypesafeMarkdownKeys {
   val RunMarkdown = config("run-markdown").hide
 }
 
-object TypesafeMarkdown extends AutoPlugin {
+object LightbendMarkdown extends AutoPlugin {
 
-  import TypesafeMarkdownKeys._
+  import LightbendMarkdownKeys._
 
-  val autoImport = TypesafeMarkdownKeys
+  val autoImport = LightbendMarkdownKeys
 
   override def trigger = NoTrigger
 
@@ -61,20 +64,45 @@ object TypesafeMarkdown extends AutoPlugin {
       "api/java/index.html" -> "Java",
       "api/scala/index.html" -> "Scala"
     ),
+    markdownUseBuiltinTheme := true,
+    markdownTheme := {
+      if (markdownUseBuiltinTheme.value) {
+        Some("com.lightbend.markdown.theme.builtin.BuiltinMarkdownTheme")
+      } else {
+        None
+      }
+    },
     run <<= docsRunSetting,
-    markdownGenerateRefReport <<= TypesafeMarkdownValidation.generateMarkdownRefReportTask,
-    markdownValidateDocs <<= TypesafeMarkdownValidation.validateDocsTask,
-    markdownValidateExternalLinks <<= TypesafeMarkdownValidation.validateExternalLinksTask,
-    libraryDependencies ++= Seq(
-      "com.typesafe.markdown" % "typesafe-markdown-server_2.11" %
-        readResourceProperty("typesafe-markdown.version.properties", "typesafe-markdown.version") % RunMarkdown.name
-    ),
+    markdownGenerateRefReport <<= LightbendMarkdownValidation.generateMarkdownRefReportTask,
+    markdownValidateDocs <<= LightbendMarkdownValidation.validateDocsTask,
+    markdownValidateExternalLinks <<= LightbendMarkdownValidation.validateExternalLinksTask,
+    libraryDependencies += {
+      val version = readResourceProperty("lightbend-markdown.version.properties", "lightbend-markdown.version")
+      val artifact = if (markdownUseBuiltinTheme.value) {
+        "lightbend-markdown-theme-builtin_2.11"
+      } else {
+        "lightbend-markdown-server_2.11"
+      }
+      "com.lightbend.markdown" % artifact % version % RunMarkdown.name
 
-    target in markdownGenerateAllDocumentation := target.value / "markdown-site",
+    },
+
+    internalDependencyClasspath in RunMarkdown <<= (thisProjectRef, settingsData, buildDependencies) flatMap { (tpf, sd, bd) =>
+      Classpaths.internalDependencies0(tpf, RunMarkdown, RunMarkdown, sd, bd)
+    },
+    externalDependencyClasspath in RunMarkdown := {
+      Classpaths.managedJars(RunMarkdown, (classpathTypes in RunMarkdown).value, update.value)
+    },
+    dependencyClasspath in RunMarkdown := (internalDependencyClasspath in RunMarkdown).value ++
+      (externalDependencyClasspath in RunMarkdown).value,
+
+    target in markdownGenerateAllDocumentation := target.value / "markdown-generated-docs",
     markdownGenerateAllDocumentation <<= markdownGenerateAllDocumentationSetting,
     markdownContentTypes := ContentTypes,
     target in markdownExtractWebJars := target.value / "markdown-webjars",
     markdownExtractWebJars <<= markdownExtractWebJarsSetting,
+    target in markdownStageSite := target.value / "markdown-site",
+    markdownStageSite <<= markdownStageSiteSetting,
 
     markdownS3PublishDocs <<= markdownS3PublishDocsSetting,
     markdownS3Bucket := None,
@@ -140,22 +168,20 @@ object TypesafeMarkdown extends AutoPlugin {
     val args = Def.spaceDelimited().parsed
     val port = args.headOption.getOrElse("9000")
 
-    val ct = (classpathTypes in RunMarkdown).value
-    val report = update.value
-
-    val classpath = Classpaths.managedJars(RunMarkdown, ct, report)
+    val classpath = (dependencyClasspath in RunMarkdown).value
     val classpathOption = Path.makeString(classpath.map(_.data))
     val docPathsOption = markdownDocPaths.value.map(p => p._1.getAbsolutePath + "=" + p._2).mkString(",")
     val apiDocsOptions = markdownApiDocs.value.map(a => a._1 + "=" + a._2).mkString(",")
+    val markdownThemeOption = markdownTheme.value.fold(Seq.empty[String])(Seq("-t", _))
 
     val options = Seq(
       "-classpath", classpathOption,
-      "com.typesafe.markdown.server.DocumentationServer",
+      "com.lightbend.markdown.server.DocumentationServer",
       "-p", port,
       "-d", docPathsOption,
       "-n", markdownDocsTitle.value,
       "-a", apiDocsOptions
-    )
+    ) ++ markdownThemeOption
 
     val process = Fork.java.fork(ForkOptions(), options)
 
@@ -169,24 +195,22 @@ object TypesafeMarkdown extends AutoPlugin {
   }
 
   private val markdownGenerateAllDocumentationSetting = Def.task {
-    val ct = (classpathTypes in RunMarkdown).value
-    val report = update.value
-
-    val classpath = Classpaths.managedJars(RunMarkdown, ct, report)
+    val classpath = (dependencyClasspath in RunMarkdown).value
     val classpathOption = Path.makeString(classpath.map(_.data))
 
     val docPathsOption = markdownDocPaths.value.map(p => p._1.getAbsolutePath + "=" + p._2).mkString(",")
     val apiDocsOptions = markdownApiDocs.value.map(a => a._1 + "=" + a._2).mkString(",")
     val outputDir = (target in markdownGenerateAllDocumentation).value
+    val markdownThemeOption = markdownTheme.value.fold(Seq.empty[String])(Seq("-t", _))
 
     val options = Seq(
       "-classpath", classpathOption,
-      "com.typesafe.markdown.generator.GenerateSite",
+      "com.lightbend.markdown.generator.GenerateSite",
       "-d", docPathsOption,
       "-n", markdownDocsTitle.value,
       "-a", apiDocsOptions,
       "-o", outputDir.getAbsolutePath
-    )
+    ) ++ markdownThemeOption
 
     val process = Fork.java.fork(ForkOptions(), options)
 
@@ -199,10 +223,7 @@ object TypesafeMarkdown extends AutoPlugin {
 
 
   private val markdownExtractWebJarsSetting = Def.task {
-    val ct = (classpathTypes in RunMarkdown).value
-    val report = update.value
-
-    val classpath = Classpaths.managedJars(RunMarkdown, ct, report)
+    val classpath = (dependencyClasspath in RunMarkdown).value
     val classloader = new URLClassLoader(classpath.map(_.data.toURI.toURL).toArray, null)
 
     val outputDir = (target in markdownExtractWebJars).value
@@ -212,6 +233,41 @@ object TypesafeMarkdown extends AutoPlugin {
     classloader.close()
 
     outputDir
+  }
+
+  private val markdownStageSiteSetting = Def.task {
+    val stageDir = (target in markdownStageSite).value
+
+    val allDocsDir = markdownGenerateAllDocumentation.value
+    val generatedDocMappings = allDocsDir.***.filter(!_.isDirectory).get pair rebase(allDocsDir, stageDir)
+    val docPathMappings = markdownDocPaths.value.flatMap {
+      case (path, prefix) =>
+        val p = if (prefix == ".") "" else if (prefix.endsWith("/")) prefix else prefix + "/"
+        val files = path.descendantsExcept((includeFilter in markdownS3PublishDocs).value, (excludeFilter in markdownS3PublishDocs).value).get
+        files.filterNot(_.isDirectory) pair relativeTo(path) map {
+          case (file, mapping) => {
+            val prefixedMapping = p + mapping
+            val finalMapping = if (prefixedMapping.startsWith("api/")) {
+              prefixedMapping
+            } else {
+              "resources/" + prefixedMapping
+            }
+            file -> stageDir / finalMapping
+          }
+        }
+    }
+    val webJarsDir = markdownExtractWebJars.value
+    val webJarMappings = (webJarsDir.***.filter(!_.isDirectory).get pair relativeTo(webJarsDir)) map {
+      case (file, path) => file -> stageDir / "webjars" / path
+    }
+
+    val allMappings = generatedDocMappings ++ docPathMappings ++ webJarMappings
+
+    Sync(streams.value.cacheDirectory / "markdown-site-cache")(allMappings)
+
+    println("Site is staged to " + stageDir)
+
+    stageDir
   }
 
   private val markdownS3PublishDocsSetting = Def.task {

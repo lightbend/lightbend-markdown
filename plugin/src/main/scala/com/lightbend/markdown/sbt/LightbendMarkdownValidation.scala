@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
  */
-package com.typesafe.markdown.sbt
+package com.lightbend.markdown.sbt
 
 import java.io._
 import java.net.HttpURLConnection
@@ -21,9 +21,9 @@ import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.control.NonFatal
 
 // Test that all the docs are renderable and valid
-object TypesafeMarkdownValidation {
+object LightbendMarkdownValidation {
 
-  import TypesafeMarkdownKeys._
+  import LightbendMarkdownKeys._
 
   /**
    * A report of all references from all markdown files.

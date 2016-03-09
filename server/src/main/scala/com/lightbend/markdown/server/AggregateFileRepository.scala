@@ -1,4 +1,7 @@
-package com.typesafe.markdown.server
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
+package com.lightbend.markdown.server
 
 import java.io.InputStream
 

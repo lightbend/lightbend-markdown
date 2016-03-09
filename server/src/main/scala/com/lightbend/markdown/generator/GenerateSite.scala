@@ -1,24 +1,29 @@
-package com.typesafe.markdown.generator
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
+package com.lightbend.markdown.generator
 
 import java.io.File
 import java.nio.file.Files
 
-import com.typesafe.markdown.server.{PrefixedRepository, AggregateFileRepository}
+import com.lightbend.markdown.server.{PrefixedRepository, AggregateFileRepository}
+import com.lightbend.markdown.theme.MarkdownTheme
 import play.core.PlayVersion
 import play.doc._
-import com.typesafe.markdown.server.html
-import play.twirl.api.Content
+import play.twirl.api.{Html, Content}
 
 object GenerateSite extends App {
 
   case class Config(projectName: Option[String] = None,
     outputPath: File = new File("."),
     docsPaths: Seq[(File, String)] = Nil,
-    homePage: String = "Home",
+    homePage: String = "Home.html",
     apiDocs: Seq[(String, String)] = Seq(
       "api/java/index.html" -> "Java",
       "api/scala/index.html" -> "Scala"
-    ))
+    ),
+    theme: Option[String] = None
+  )
 
   val options = new scopt.OptionParser[Config]("Documentation Server") {
 
@@ -36,6 +41,9 @@ object GenerateSite extends App {
 
     opt[Seq[(String, String)]]('a', "api-docs") valueName "<path>=<text>" action { (x, c) =>
       c.copy(apiDocs = x) } text "The API docs links to render"
+
+    opt[String]('t', "theme") valueName "<object-name>" action { (x, c) =>
+      c.copy(theme = Some(x)) } text s"The name of an object that extends ${classOf[MarkdownTheme].getName}"
   }
 
   options.parse(args, Config()) match {
@@ -46,17 +54,16 @@ object GenerateSite extends App {
 
     import config._
 
+    val markdownTheme = MarkdownTheme.load(this.getClass.getClassLoader, theme)
+
     val repo = new AggregateFileRepository(docsPaths.map {
       case (path, "." | "") => new FilesystemRepository(path)
       case (path, prefix) => new PrefixedRepository(prefix + "/", new FilesystemRepository(path))
     })
 
     val playDoc = {
-      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePage, None), new PlayDocTemplates {
-        override def nextLink(toc: TocTree): String = html.nextLink(toc).body
-        override def sidebar(hierarchy: List[Toc]): String = html.sidebar(hierarchy).body
-        override def toc(toc: Toc): String = PlayDocTemplates.toc(toc)
-      })
+      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePage, None),
+        markdownTheme.playDocTemplates, Some("html"))
     }
 
     val index = playDoc.pageIndex.getOrElse(throw new IllegalStateException("Generating documentation only works for indexed documentation"))
@@ -67,9 +74,11 @@ object GenerateSite extends App {
         case (_, page: TocPage) =>
           playDoc.renderPage(page.page).map { rendered =>
             println("Generating " + page.page + "...")
-            val renderedHtml: Content = html.documentation(projectName, None, homePage, rendered.html, rendered.sidebarHtml, config.apiDocs)
-            Files.write(new File(outputPath, page.page).toPath, renderedHtml.body.getBytes("utf-8"))
-            page.page
+            val renderedHtml: Content = markdownTheme.renderPage(projectName, None, homePage, Html(rendered.html),
+              rendered.sidebarHtml.map(Html.apply), config.apiDocs)
+            val pageName = page.page + ".html"
+            Files.write(new File(outputPath, pageName).toPath, renderedHtml.body.getBytes("utf-8"))
+            pageName
           }.toSeq
       }
     }

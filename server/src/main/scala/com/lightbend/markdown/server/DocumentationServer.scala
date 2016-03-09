@@ -1,20 +1,21 @@
-package com.typesafe.markdown.server
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
+package com.lightbend.markdown.server
 
 import java.io.File
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import akka.stream.scaladsl.StreamConverters
+import com.lightbend.markdown.theme.MarkdownTheme
 import org.webjars.WebJarAssetLocator
 import play.api.http.{ContentTypes, HttpEntity}
 import play.api.libs.MimeTypes
-import play.api.libs.iteratee.{Enumeratee, Enumerator}
-import play.api.libs.streams.Streams
 import play.api.mvc.Results._
 import play.api.mvc._
 import play.core._
 import play.core.server._
-import com.typesafe.markdown.server.html
 import play.doc._
 import play.api.routing.sird._
+import play.twirl.api.Html
 
 /**
   * Used to start the documentation server.
@@ -24,12 +25,14 @@ object DocumentationServer extends App {
   case class Config(projectName: Option[String] = None,
     projectPath: File = new File("."),
     docsPaths: Seq[(File, String)] = Nil,
-    homePage: String = "Home",
+    homePage: String = "Home.html",
     port: Int = 9000,
     apiDocs: Seq[(String, String)] = Seq(
       "api/java/index.html" -> "Java",
       "api/scala/index.html" -> "Scala"
-    ))
+    ),
+    theme: Option[String] = None
+  )
 
   val options = new scopt.OptionParser[Config]("Documentation Server") {
 
@@ -50,6 +53,9 @@ object DocumentationServer extends App {
 
     opt[Seq[(String, String)]]('a', "api-docs") valueName "<path>=<text>" action { (x, c) =>
       c.copy(apiDocs = x) } text "The API docs links to render"
+
+    opt[String]('t', "theme") valueName "<object-name>" action { (x, c) =>
+      c.copy(theme = Some(x)) } text s"The name of an object that extends ${classOf[MarkdownTheme].getName}"
   }
 
   options.parse(args, Config()) match {
@@ -60,17 +66,16 @@ object DocumentationServer extends App {
 
     import config._
 
+    val markdownTheme = MarkdownTheme.load(this.getClass.getClassLoader, theme)
+
     val repo = new AggregateFileRepository(docsPaths.map {
       case (path, "." | "") => new FilesystemRepository(path)
       case (path, prefix) => new PrefixedRepository(prefix + "/", new FilesystemRepository(path))
     })
 
     def playDoc = {
-      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePage, None), new PlayDocTemplates {
-        override def nextLink(toc: TocTree): String = html.nextLink(toc).body
-        override def sidebar(heirarchy: List[Toc]): String = html.sidebar(heirarchy).body
-        override def toc(toc: Toc): String = PlayDocTemplates.toc(toc)
-      })
+      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePage, None),
+        markdownTheme.playDocTemplates, Some("html"))
     }
 
     val webjarLocator = new WebJarAssetLocator()
@@ -80,10 +85,12 @@ object DocumentationServer extends App {
         Redirect("/" + homePage)
       }
 
-      case GET(p"/$page") => Action {
+      case GET(p"/$page.html") => Action {
         playDoc.renderPage(page) match {
-          case None => NotFound(html.documentation(projectName, None, homePage, "Page " + page + " not found.", None, config.apiDocs))
-          case Some(RenderedPage(mainPage, sidebar, _)) => Ok(html.documentation(projectName, None, homePage, mainPage, sidebar, config.apiDocs))
+          case None => NotFound(markdownTheme.renderPage(projectName, None, homePage,
+            Html("Page " + page + " not found."), None, config.apiDocs))
+          case Some(RenderedPage(mainPage, sidebar, _)) => Ok(markdownTheme.renderPage(projectName, None, homePage,
+            Html(mainPage), sidebar.map(Html.apply), config.apiDocs))
         }
       }
 
@@ -111,12 +118,10 @@ object DocumentationServer extends App {
   }
 
   private def sendFileInline(repo: FileRepository, path: String): Option[Result] = {
-    import play.api.libs.concurrent.Execution.Implicits.defaultContext
     repo.handleFile(path) { handle =>
       Ok.sendEntity(
         HttpEntity.Streamed(
-          Source(Streams.enumeratorToPublisher(Enumerator.fromStream(handle.is) &> Enumeratee.onIterateeDone(handle.close)))
-            .map(ByteString.apply),
+          StreamConverters.fromInputStream(() => handle.is),
           Some(handle.size),
           MimeTypes.forFileName(handle.name).orElse(Some(ContentTypes.BINARY))
         )

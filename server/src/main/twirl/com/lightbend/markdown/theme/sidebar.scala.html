@@ -1,0 +1,8 @@
+@*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ *@
+@(hierarchy: List[play.doc.Toc])
+@for(toc <- hierarchy) {  <li><label>@toc.title</label></li>
+@for(page <- toc.nodes) { <li><a href="@{page._2.page}.html">@page._2.title</a></li>
+}
+}

@@ -1,35 +1,32 @@
 lazy val root = (project in file("."))
   .settings(common: _*)
   .settings(
-    name := "typesafe-markdown",
+    name := "lightbend-markdown",
     publish := {},
     publishTo := None
-  ).aggregate(server, plugin)
+  ).aggregate(server, plugin, theme)
 
-lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.3.0"
+lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.4.0"
 
 lazy val server = (project in file("server"))
-  .enablePlugins(SbtWeb, SbtTwirl)
   .settings(common: _*)
+  .enablePlugins(SbtTwirl)
   .settings(
-    name := "typesafe-markdown-server",
+    name := "lightbend-markdown-server",
     scalaVersion := "2.11.7",
     libraryDependencies ++= Seq(
-      "com.typesafe.play" %% "play-netty-server" % "2.5.0-M1",
+      "com.typesafe.play" %% "play-netty-server" % "2.5.0",
+      "com.typesafe.play" %% "play-logback" % "2.5.0",
       playDoc,
       "com.github.scopt" %% "scopt" % "3.3.0",
-      "org.webjars" % "jquery" % "1.9.0",
-      "org.webjars" % "prettify" % "4-Mar-2013",
       "org.webjars" % "webjars-locator-core" % "0.30"
-    ),
-    pipelineStages in Assets := Seq(uglify),
-    LessKeys.compress := true
+    )
   )
 
 lazy val plugin = (project in file("plugin"))
   .settings(common: _*)
   .settings(
-    name := "sbt-typesafe-markdown",
+    name := "sbt-lightbend-markdown",
     libraryDependencies ++= Seq(
       "com.github.seratch" %% "awscala" % "0.5.5",
       "org.webjars" % "webjars-locator-core" % "0.30",
@@ -39,22 +36,35 @@ lazy val plugin = (project in file("plugin"))
     resourceGenerators in Compile <+= generateVersionFile
   )
 
+lazy val theme = (project in file("theme"))
+  .enablePlugins(SbtWeb, SbtTwirl)
+  .settings(common: _*)
+  .settings(
+    name := "lightbend-markdown-builtin-theme",
+    scalaVersion := "2.11.7",
+    libraryDependencies ++= Seq(
+      "org.webjars" % "jquery" % "1.9.0",
+      "org.webjars" % "prettify" % "4-Mar-2013"
+    ),
+    pipelineStages in Assets := Seq(uglify),
+    LessKeys.compress := true
+  ).dependsOn(server)
 
 def common: Seq[Setting[_]] = Seq(
-  organization := "com.typesafe.markdown",
+  organization := "com.lightbend.markdown",
 
   licenses := Seq("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.html")),
   bintrayOrganization := Some("typesafe"),
   bintrayRepository := "ivy-releases",
-  bintrayPackage := "typesafe-markdown",
+  bintrayPackage := "lightbend-markdown",
   bintrayReleaseOnPublish := false,
   publishMavenStyle := false
 )
 
 def generateVersionFile = Def.task {
   val version = (Keys.version in server).value
-  val file = (resourceManaged in Compile).value / "typesafe-markdown.version.properties"
-  val content = s"typesafe-markdown.version=$version"
+  val file = (resourceManaged in Compile).value / "lightbend-markdown.version.properties"
+  val content = s"lightbend-markdown.version=$version"
   IO.write(file, content)
   Seq(file)
 }

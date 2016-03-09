@@ -1,0 +1,32 @@
+@*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ *@
+@(projectName: Option[String], title: Option[String], home: String, content: Html, sidebar: Option[Html], apiDocs: Seq[(String, String)])
+
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>Lightbend@for(p <- projectName){ - @p} - Documentation@for(t <- title){ - @t}</title>
+        <meta charset="utf-8"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+        @for(p <- projectName) {
+            <meta name="description" content="Documentation for @p"/>
+        }
+    </head>
+    <body>
+        <h1 class="title"><a href="@home">@for(p <- projectName){ @p }Documentation</a></h1>
+        <aside>
+            <ul>
+                <li><label>API docs</label></li>
+                @for((href, text) <- apiDocs) {
+                    <li><a href="@href">@text</a></li>
+                }
+                @sidebar
+            </ul>
+        </aside>
+        <article>
+        @content
+        </article>
+    </body>
+</html>
