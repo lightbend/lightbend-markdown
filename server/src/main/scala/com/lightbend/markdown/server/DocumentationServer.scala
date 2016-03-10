@@ -26,12 +26,14 @@ object DocumentationServer extends App {
     projectPath: File = new File("."),
     docsPaths: Seq[(File, String)] = Nil,
     homePage: String = "Home.html",
+    homePageTitle: String = "Home",
     port: Int = 9000,
     apiDocs: Seq[(String, String)] = Seq(
       "api/java/index.html" -> "Java",
       "api/scala/index.html" -> "Scala"
     ),
-    theme: Option[String] = None
+    theme: Option[String] = None,
+    sourceUrl: Option[String] = None
   )
 
   val options = new scopt.OptionParser[Config]("Documentation Server") {
@@ -48,6 +50,9 @@ object DocumentationServer extends App {
     opt[String]('h', "home-page") valueName "<page-name>" action { (x, c) =>
       c.copy(homePage = x) } text "The home page of the documentation"
 
+    opt[String]('i', "home-page-title") valueName "<page-title>" action { (x, c) =>
+      c.copy(homePage = x) } text "The title of the home page of the documentation"
+
     opt[Int]('p', "port") valueName "<port>" action { (x, c) =>
       c.copy(port = x) } text "The port to run the server on"
 
@@ -56,6 +61,9 @@ object DocumentationServer extends App {
 
     opt[String]('t', "theme") valueName "<object-name>" action { (x, c) =>
       c.copy(theme = Some(x)) } text s"The name of an object that extends ${classOf[MarkdownTheme].getName}"
+
+    opt[String]('s', "source-url") valueName "<url>" action { (x, c) =>
+      c.copy(sourceUrl = Some(x)) } text "The URL to render source paths to"
   }
 
   options.parse(args, Config()) match {
@@ -74,7 +82,7 @@ object DocumentationServer extends App {
     })
 
     def playDoc = {
-      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePage, None),
+      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePageTitle, None),
         markdownTheme.playDocTemplates, Some("html"))
     }
 
@@ -88,9 +96,12 @@ object DocumentationServer extends App {
       case GET(p"/$page.html") => Action {
         playDoc.renderPage(page) match {
           case None => NotFound(markdownTheme.renderPage(projectName, None, homePage,
-            Html("Page " + page + " not found."), None, config.apiDocs))
-          case Some(RenderedPage(mainPage, sidebar, _)) => Ok(markdownTheme.renderPage(projectName, None, homePage,
-            Html(mainPage), sidebar.map(Html.apply), config.apiDocs))
+            Html("Page " + page + " not found."), None, config.apiDocs, None))
+          case Some(RenderedPage(mainPage, sidebar, path)) =>
+            val sourcePath = sourceUrl.map(_ + path)
+
+            Ok(markdownTheme.renderPage(projectName, None, homePage,
+              Html(mainPage), sidebar.map(Html.apply), config.apiDocs, sourcePath))
         }
       }
 

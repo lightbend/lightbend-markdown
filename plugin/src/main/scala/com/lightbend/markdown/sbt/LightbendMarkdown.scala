@@ -21,6 +21,7 @@ object LightbendMarkdownKeys {
   val markdownDocPaths = taskKey[Seq[(File, String)]]("The paths to include in the documentation")
   val markdownApiDocs = settingKey[Seq[(String, String)]]("The API docs links to render")
   val markdownTheme = settingKey[Option[String]]("The markdown theme object")
+  val markdownSourceUrl = settingKey[Option[URL]]("A URL to the source of the markdown files")
   val markdownUseBuiltinTheme = settingKey[Boolean]("Whether the builtin markdown theme should be used")
   val markdownValidateDocs = taskKey[Unit]("Validates the play docs to ensure they compile and that all links resolve.")
   val markdownValidateExternalLinks = taskKey[Seq[String]]("Validates that all the external links are valid, by checking that they return 200.")
@@ -41,6 +42,17 @@ object LightbendMarkdownKeys {
   val markdownEvaluateSbtFiles = taskKey[Unit]("Evaluate all the sbt files in the project")
 
   val RunMarkdown = config("run-markdown").hide
+
+  private def readResourceProperty(resource: String, property: String): String = {
+    val props = new java.util.Properties
+    val stream = getClass.getClassLoader.getResourceAsStream(resource)
+    try { props.load(stream) }
+    catch { case e: Exception => }
+    finally { if (stream ne null) stream.close }
+    props.getProperty(property)
+  }
+
+  val LightbendMarkdownVersion = readResourceProperty("lightbend-markdown.version.properties", "lightbend-markdown.version")
 }
 
 object LightbendMarkdown extends AutoPlugin {
@@ -72,12 +84,13 @@ object LightbendMarkdown extends AutoPlugin {
         None
       }
     },
+    markdownSourceUrl := None,
     run <<= docsRunSetting,
     markdownGenerateRefReport <<= LightbendMarkdownValidation.generateMarkdownRefReportTask,
     markdownValidateDocs <<= LightbendMarkdownValidation.validateDocsTask,
     markdownValidateExternalLinks <<= LightbendMarkdownValidation.validateExternalLinksTask,
     libraryDependencies += {
-      val version = readResourceProperty("lightbend-markdown.version.properties", "lightbend-markdown.version")
+      val version = LightbendMarkdownVersion
       val artifact = if (markdownUseBuiltinTheme.value) {
         "lightbend-markdown-theme-builtin_2.11"
       } else {
@@ -173,6 +186,7 @@ object LightbendMarkdown extends AutoPlugin {
     val docPathsOption = markdownDocPaths.value.map(p => p._1.getAbsolutePath + "=" + p._2).mkString(",")
     val apiDocsOptions = markdownApiDocs.value.map(a => a._1 + "=" + a._2).mkString(",")
     val markdownThemeOption = markdownTheme.value.fold(Seq.empty[String])(Seq("-t", _))
+    val markdownSourceUrlOption = markdownSourceUrl.value.fold(Seq.empty[String])(url => Seq("-s", url.toString))
 
     val options = Seq(
       "-classpath", classpathOption,
@@ -181,7 +195,7 @@ object LightbendMarkdown extends AutoPlugin {
       "-d", docPathsOption,
       "-n", markdownDocsTitle.value,
       "-a", apiDocsOptions
-    ) ++ markdownThemeOption
+    ) ++ markdownThemeOption ++ markdownSourceUrlOption
 
     val process = Fork.java.fork(ForkOptions(), options)
 
@@ -202,6 +216,7 @@ object LightbendMarkdown extends AutoPlugin {
     val apiDocsOptions = markdownApiDocs.value.map(a => a._1 + "=" + a._2).mkString(",")
     val outputDir = (target in markdownGenerateAllDocumentation).value
     val markdownThemeOption = markdownTheme.value.fold(Seq.empty[String])(Seq("-t", _))
+    val markdownSourceUrlOption = markdownSourceUrl.value.fold(Seq.empty[String])(url => Seq("-s", url.toString))
 
     val options = Seq(
       "-classpath", classpathOption,
@@ -210,7 +225,7 @@ object LightbendMarkdown extends AutoPlugin {
       "-n", markdownDocsTitle.value,
       "-a", apiDocsOptions,
       "-o", outputDir.getAbsolutePath
-    ) ++ markdownThemeOption
+    ) ++ markdownThemeOption ++ markdownSourceUrlOption
 
     val process = Fork.java.fork(ForkOptions(), options)
 
@@ -402,15 +417,6 @@ object LightbendMarkdown extends AutoPlugin {
     }
     waitEOF()
     consoleReader.getTerminal.setEchoEnabled(true)
-  }
-
-  private def readResourceProperty(resource: String, property: String): String = {
-    val props = new java.util.Properties
-    val stream = getClass.getClassLoader.getResourceAsStream(resource)
-    try { props.load(stream) }
-    catch { case e: Exception => }
-    finally { if (stream ne null) stream.close }
-    props.getProperty(property)
   }
 
   private def detectContentType(contentTypes: Map[String, String], name: String): Option[String] = {

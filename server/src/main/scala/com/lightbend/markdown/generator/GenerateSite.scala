@@ -18,11 +18,13 @@ object GenerateSite extends App {
     outputPath: File = new File("."),
     docsPaths: Seq[(File, String)] = Nil,
     homePage: String = "Home.html",
+    homePageTitle: String = "Home",
     apiDocs: Seq[(String, String)] = Seq(
       "api/java/index.html" -> "Java",
       "api/scala/index.html" -> "Scala"
     ),
-    theme: Option[String] = None
+    theme: Option[String] = None,
+    sourceUrl: Option[String] = None
   )
 
   val options = new scopt.OptionParser[Config]("Documentation Server") {
@@ -39,11 +41,17 @@ object GenerateSite extends App {
     opt[String]('h', "home-page") valueName "<page-name>" action { (x, c) =>
       c.copy(homePage = x) } text "The home page of the documentation"
 
+    opt[String]('i', "home-page-title") valueName "<page-title>" action { (x, c) =>
+      c.copy(homePage = x) } text "The title of the home page of the documentation"
+
     opt[Seq[(String, String)]]('a', "api-docs") valueName "<path>=<text>" action { (x, c) =>
       c.copy(apiDocs = x) } text "The API docs links to render"
 
     opt[String]('t', "theme") valueName "<object-name>" action { (x, c) =>
       c.copy(theme = Some(x)) } text s"The name of an object that extends ${classOf[MarkdownTheme].getName}"
+
+    opt[String]('s', "source-url") valueName "<url>" action { (x, c) =>
+      c.copy(sourceUrl = Some(x)) } text "The URL to render source paths to"
   }
 
   options.parse(args, Config()) match {
@@ -62,7 +70,7 @@ object GenerateSite extends App {
     })
 
     val playDoc = {
-      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePage, None),
+      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePageTitle, None),
         markdownTheme.playDocTemplates, Some("html"))
     }
 
@@ -72,10 +80,12 @@ object GenerateSite extends App {
       toc.nodes.flatMap {
         case (_, childToc: Toc) => render(childToc)
         case (_, page: TocPage) =>
+          println("Generating " + page.page + "...")
           playDoc.renderPage(page.page).map { rendered =>
-            println("Generating " + page.page + "...")
+            val sourcePath = sourceUrl.map(_ + rendered.path)
+
             val renderedHtml: Content = markdownTheme.renderPage(projectName, None, homePage, Html(rendered.html),
-              rendered.sidebarHtml.map(Html.apply), config.apiDocs)
+              rendered.sidebarHtml.map(Html.apply), config.apiDocs, sourcePath)
             val pageName = page.page + ".html"
             Files.write(new File(outputPath, pageName).toPath, renderedHtml.body.getBytes("utf-8"))
             pageName

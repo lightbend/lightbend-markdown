@@ -13,8 +13,8 @@ trait MarkdownTheme {
 
   /** Render a page of documentation */
   def renderPage(projectName: Option[String], title: Option[String], home: String, content: Html,
-                 sidebar: Option[Html], apiDocs: Seq[(String, String)]): Html =
-    html.documentation(projectName, title, home, content, sidebar, apiDocs)
+                 sidebar: Option[Html], apiDocs: Seq[(String, String)], sourceUrl: Option[String]): Html =
+    html.documentation(projectName, title, home, content, sidebar, apiDocs, sourceUrl)
 
   /** Render the sidebare */
   def renderSidebar(hierarchy: List[play.doc.Toc]): Html =
