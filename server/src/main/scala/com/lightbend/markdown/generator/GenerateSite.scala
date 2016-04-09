@@ -8,6 +8,8 @@ import java.nio.file.Files
 
 import com.lightbend.markdown.server.{PrefixedRepository, AggregateFileRepository}
 import com.lightbend.markdown.theme.MarkdownTheme
+import com.lightbend.docs.TOC
+import play.api.libs.json.Json
 import play.core.PlayVersion
 import play.doc._
 import play.twirl.api.{Html, Content}
@@ -24,7 +26,8 @@ object GenerateSite extends App {
       "api/scala/index.html" -> "Scala"
     ),
     theme: Option[String] = None,
-    sourceUrl: Option[String] = None
+    sourceUrl: Option[String] = None,
+    generateIndex: Boolean = false
   )
 
   val options = new scopt.OptionParser[Config]("Documentation Server") {
@@ -52,6 +55,9 @@ object GenerateSite extends App {
 
     opt[String]('s', "source-url") valueName "<url>" action { (x, c) =>
       c.copy(sourceUrl = Some(x)) } text "The URL to render source paths to"
+
+    opt[Unit]('g', "generate-index") action { (_, c) =>
+      c.copy(generateIndex = true) } text "Generate an index file"
   }
 
   options.parse(args, Config()) match {
@@ -98,8 +104,31 @@ object GenerateSite extends App {
 
     // Render all pages
     val allPages = render(index.toc).toSet
+
     // Delete all pages that don't exist
     outputPath.list().filterNot(allPages).foreach(new File(outputPath, _).delete())
+
+    if (generateIndex) {
+      def convertToc(toc: TocTree): TOC = {
+        toc match {
+          case childToc: Toc =>
+            TOC(childToc.title, None, None, nostyle = false, None, childToc.nodes.map(_._2).map(convertToc))
+          case page: TocPage =>
+            val sourcePath = for {
+              url <- sourceUrl
+              indexPage <- index.get(page.page)
+            } yield {
+              url + indexPage.fullPath + ".md"
+            }
+
+            TOC(page.title, Some(page.page + ".html"), sourcePath, nostyle = false, None, Nil)
+        }
+      }
+      val tocJson = Json.toJson(convertToc(index.toc))
+      val indexFile = new File(outputPath, "index.json")
+      Files.write(indexFile.toPath, Json.prettyPrint(tocJson).getBytes("utf-8"))
+    }
+
     println("Done!")
   }
 

@@ -97,7 +97,7 @@ object DocumentationServer extends App {
         playDoc.renderPage(page) match {
           case None => NotFound(markdownTheme.renderPage(projectName, None, homePage,
             Html("Page " + page + " not found."), None, config.apiDocs, None))
-          case Some(RenderedPage(mainPage, sidebar, path)) =>
+          case Some(RenderedPage(mainPage, sidebar, path, breoadcrumbs)) =>
             val sourcePath = sourceUrl.map(_ + path)
 
             Ok(markdownTheme.renderPage(projectName, None, homePage,

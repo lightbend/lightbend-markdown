@@ -6,7 +6,7 @@ lazy val root = (project in file("."))
     publishTo := None
   ).aggregate(server, plugin, theme)
 
-lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.4.0"
+lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.6.0"
 
 lazy val server = (project in file("server"))
   .settings(common: _*)
@@ -58,7 +58,9 @@ def common: Seq[Setting[_]] = Seq(
   bintrayRepository := "ivy-releases",
   bintrayPackage := "lightbend-markdown",
   bintrayReleaseOnPublish := false,
-  publishMavenStyle := false
+  publishMavenStyle := false,
+  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
+  releaseProcess += releaseStepTask(bintrayRelease)
 )
 
 def generateVersionFile = Def.task {
