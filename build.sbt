@@ -3,7 +3,8 @@ lazy val root = (project in file("."))
   .settings(
     name := "lightbend-markdown",
     publish := {},
-    publishTo := None
+    PgpKeys.publishSigned := {},
+    publishTo := Some(Resolver.file("dummy", target.value / "dummy"))
   ).aggregate(server, plugin, theme)
 
 lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.6.0"
