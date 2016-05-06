@@ -51,6 +51,8 @@ lazy val theme = (project in file("theme"))
     LessKeys.compress := true
   ).dependsOn(server)
 
+import ReleaseTransformations._
+
 def common: Seq[Setting[_]] = Seq(
   organization := "com.lightbend.markdown",
 
@@ -61,7 +63,20 @@ def common: Seq[Setting[_]] = Seq(
   bintrayReleaseOnPublish := false,
   publishMavenStyle := false,
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
-  releaseProcess += releaseStepTask(bintrayRelease)
+
+  releaseProcess := Seq[ReleaseStep](
+    checkSnapshotDependencies,
+    inquireVersions,
+    runTest,
+    setReleaseVersion,
+    commitReleaseVersion,
+    tagRelease,
+    publishArtifacts,
+    releaseStepTask(bintrayRelease),
+    setNextVersion,
+    commitNextVersion,
+    pushChanges
+  )
 )
 
 def generateVersionFile = Def.task {
