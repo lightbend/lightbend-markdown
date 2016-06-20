@@ -272,9 +272,10 @@ object LightbendMarkdownValidation {
           println("  api/scala/play/api/Application.html#requestHandler")
           false
         case scalaApi if scalaApi.link.startsWith("api/scala/") => fileExists(scalaApi.link.split('#').head)
-        case javaApiFrames if javaApiFrames.link.startsWith("api/java/index.html?") =>
-          fileExists("api/java/" + javaApiFrames.link.split('#').head.split('?').last)
-        case javaApi if javaApi.link.startsWith("api/java/") => fileExists(javaApi.link.split('#').head)
+        case javaApiFrames if javaApiFrames.link.contains("index.html?") =>
+          val prefix = javaApiFrames.link.take(javaApiFrames.link.indexOf("index.html?"))
+          fileExists(prefix + javaApiFrames.link.split('#').head.split('?').last)
+        case otherApi if otherApi.link.startsWith("api/") => fileExists(otherApi.link.split('#').head)
         case resource if resource.link.startsWith("resources/") =>
           fileExists(resource.link.stripPrefix("resources/"))
         case bad => false
