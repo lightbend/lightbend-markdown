@@ -16,8 +16,8 @@ lazy val server = (project in file("server"))
     name := "lightbend-markdown-server",
     scalaVersion := "2.11.7",
     libraryDependencies ++= Seq(
-      "com.typesafe.play" %% "play-netty-server" % "2.5.0",
-      "com.typesafe.play" %% "play-logback" % "2.5.0",
+      "com.typesafe.play" %% "play-netty-server" % "2.5.9",
+      "com.typesafe.play" %% "play-logback" % "2.5.9",
       playDoc,
       "com.github.scopt" %% "scopt" % "3.3.0",
       "org.webjars" % "webjars-locator-core" % "0.30"
@@ -29,9 +29,9 @@ lazy val plugin = (project in file("plugin"))
   .settings(
     name := "sbt-lightbend-markdown",
     libraryDependencies ++= Seq(
-      "com.github.seratch" %% "awscala" % "0.5.5",
       "org.webjars" % "webjars-locator-core" % "0.30",
-      playDoc
+      playDoc,
+      "com.typesafe.play" %% "play-json" % "2.4.8"
     ),
     sbtPlugin := true,
     resourceGenerators in Compile <+= generateVersionFile

@@ -3,8 +3,9 @@
  */
 package com.lightbend.markdown.server
 
-import java.io.InputStream
+import java.io.{File, InputStream}
 
+import com.lightbend.markdown.DocPath
 import play.doc.FileHandle
 import play.doc.FileRepository
 
@@ -40,4 +41,15 @@ class PrefixedRepository(prefix: String, repo: FileRepository) extends FileRepos
 
   override def findFileWithName(name: String): Option[String] =
     repo.findFileWithName(name).map(prefix + _)
+}
+
+object SourceFinder {
+  def findPathFor(rootDir: File, docPaths: Seq[DocPath], path: String): Option[String] = {
+    docPaths.collect {
+      case DocPath(file, prefix) if prefix == "." => new File(file, path)
+      case DocPath(file, prefix) if path.startsWith(prefix) => new File(file, path.stripPrefix(prefix))
+    }.collectFirst {
+      case file if file.exists() => file.getCanonicalPath.stripPrefix(rootDir.getCanonicalPath).stripPrefix(File.separator)
+    }
+  }
 }

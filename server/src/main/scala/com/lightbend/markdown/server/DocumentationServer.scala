@@ -3,12 +3,13 @@
  */
 package com.lightbend.markdown.server
 
-import java.io.File
 import akka.stream.scaladsl.StreamConverters
+import com.lightbend.markdown.{DocPath, Documentation, DocumentationServerConfig}
 import com.lightbend.markdown.theme.MarkdownTheme
 import org.webjars.WebJarAssetLocator
 import play.api.http.{ContentTypes, HttpEntity}
 import play.api.libs.MimeTypes
+import play.api.libs.json.Json
 import play.api.mvc.Results._
 import play.api.mvc._
 import play.core._
@@ -22,121 +23,96 @@ import play.twirl.api.Html
   */
 object DocumentationServer extends App {
 
-  case class Config(projectName: Option[String] = None,
-    projectPath: File = new File("."),
-    docsPaths: Seq[(File, String)] = Nil,
-    homePage: String = "Home.html",
-    homePageTitle: String = "Home",
-    port: Int = 9000,
-    apiDocs: Seq[(String, String)] = Seq(
-      "api/java/index.html" -> "Java",
-      "api/scala/index.html" -> "Scala"
-    ),
-    theme: Option[String] = None,
-    sourceUrl: Option[String] = None
+  val configJson = Json.parse(args.head)
+  val serverConfig = configJson.as[DocumentationServerConfig]
+
+  import serverConfig._
+  import config._
+
+  val markdownTheme = MarkdownTheme.load(this.getClass.getClassLoader, theme)
+
+  val nameExists = documentation.map(_.name).toSet
+
+  case class Docs(
+    documentation: Documentation,
+    repo: FileRepository
   )
 
-  val options = new scopt.OptionParser[Config]("Documentation Server") {
+  val docs = documentation.map { d =>
+    d.name -> Docs(d, new AggregateFileRepository(d.docsPaths.map {
+      case DocPath(path, "." | "") => new FilesystemRepository(path)
+      case DocPath(path, prefix) => new PrefixedRepository(prefix + "/", new FilesystemRepository(path))
+    }))
+  }.toMap
 
-    opt[String]('n', "project-name") valueName "<name>"  action { (x, c) =>
-      c.copy(projectName = Some(x)) } text "The name of the project"
-
-    opt[File]('r', "root-path") valueName "<path>" action { (x, c) =>
-      c.copy(projectPath = x) } text "The path of the project"
-
-    opt[Seq[(File, String)]]('d', "doc-paths") required() valueName "<path1>,<path2>" action { (x, c) =>
-      c.copy(docsPaths = x) } text "The paths of the documentation to serve"
-
-    opt[String]('h', "home-page") valueName "<page-name>" action { (x, c) =>
-      c.copy(homePage = x) } text "The home page of the documentation"
-
-    opt[String]('i', "home-page-title") valueName "<page-title>" action { (x, c) =>
-      c.copy(homePage = x) } text "The title of the home page of the documentation"
-
-    opt[Int]('p', "port") valueName "<port>" action { (x, c) =>
-      c.copy(port = x) } text "The port to run the server on"
-
-    opt[Seq[(String, String)]]('a', "api-docs") valueName "<path>=<text>" action { (x, c) =>
-      c.copy(apiDocs = x) } text "The API docs links to render"
-
-    opt[String]('t', "theme") valueName "<object-name>" action { (x, c) =>
-      c.copy(theme = Some(x)) } text s"The name of an object that extends ${classOf[MarkdownTheme].getName}"
-
-    opt[String]('s', "source-url") valueName "<url>" action { (x, c) =>
-      c.copy(sourceUrl = Some(x)) } text "The URL to render source paths to"
+  def playDoc(docs: Docs) = {
+    new PlayDoc(docs.repo, docs.repo, "resources", PlayVersion.current, PageIndex.parseFrom(docs.repo, docs.documentation.homePageTitle, None),
+      markdownTheme.playDocTemplates, Some("html"))
   }
 
-  options.parse(args, Config()) match {
-    case Some(config) => start(config)
-  }
+  val webjarLocator = new WebJarAssetLocator()
 
-  private def start(config: Config): Unit = {
-
-    import config._
-
-    val markdownTheme = MarkdownTheme.load(this.getClass.getClassLoader, theme)
-
-    val repo = new AggregateFileRepository(docsPaths.map {
-      case (path, "." | "") => new FilesystemRepository(path)
-      case (path, prefix) => new PrefixedRepository(prefix + "/", new FilesystemRepository(path))
-    })
-
-    def playDoc = {
-      new PlayDoc(repo, repo, "resources", PlayVersion.current, PageIndex.parseFrom(repo, homePageTitle, None),
-        markdownTheme.playDocTemplates, Some("html"))
+  val server = NettyServer.fromRouter(ServerConfig(rootDir = projectPath, port = Some(port))) {
+    case GET(p"/") => Action {
+      Ok(markdownTheme.renderPage(projectName, None, "/", Html(
+        documentation.map { d =>
+          s"""<li><a href="/${d.name}/${d.homePage}">${d.homePageTitle}</a></li>"""
+        }.mkString("<p>Select your language:</p><ul>", "", "</ul>")
+      ), None, None, Nil, None))
     }
 
-    val webjarLocator = new WebJarAssetLocator()
+    case GET(p"/$name/$pageName.html") if nameExists(name) => Action {
+      (for {
+        doc <- docs.get(name)
+        page <- playDoc(doc).renderPage(pageName)
+      } yield {
 
-    val server = NettyServer.fromRouter(ServerConfig(rootDir = projectPath, port = Some(port))) {
-      case GET(p"/") => Action {
-        Redirect("/" + homePage)
-      }
+        val sourcePath = for {
+          url <- sourceUrl
+          path <- SourceFinder.findPathFor(documentationRoot, doc.documentation.docsPaths, page.path)
+        } yield s"$url$path"
 
-      case GET(p"/$page.html") => Action {
-        playDoc.renderPage(page) match {
-          case None => NotFound(markdownTheme.renderPage(projectName, None, homePage,
-            Html("Page " + page + " not found."), None, config.apiDocs, None))
-          case Some(RenderedPage(mainPage, sidebar, path, breoadcrumbs)) =>
-            val sourcePath = sourceUrl.map(_ + path)
-
-            Ok(markdownTheme.renderPage(projectName, None, homePage,
-              Html(mainPage), sidebar.map(Html.apply), config.apiDocs, sourcePath))
-        }
-      }
-
-      case GET(p"/resources/$path*") => Action {
-        sendFileInline(repo, path).getOrElse(NotFound("Resource not found [" + path + "]"))
-      }
-
-      case GET(p"/webjars/$webjar/$path*") => Action {
-        val resource = Option(webjarLocator.getFullPathExact(webjar, path))
-        resource.fold[Result](NotFound)(Ok.sendResource(_))
-      }
-
-      case GET(p"/api/$path*") => Action {
-        sendFileInline(repo, "api/" + path).getOrElse(NotFound("API doc resource not found [" + path + "]"))
-      }
-
-      case _ => Action {
-        Redirect("/" + homePage)
+        Ok(markdownTheme.renderPage(projectName, None, doc.documentation.homePage,
+          Html(page.html), page.sidebarHtml.map(Html.apply), page.breadcrumbsHtml.map(Html.apply), doc.documentation.apiDocs.toSeq, sourcePath))
+      }).getOrElse {
+        NotFound(markdownTheme.renderPage(projectName, None, "/", Html("Page " + pageName + " not found."),
+          None, None, Nil, None))
       }
     }
 
-    Runtime.getRuntime.addShutdownHook(new Thread {
-      override def run() = server.stop()
-    })
+    case GET(p"/$name/resources/$path*") if nameExists(name) => Action {
+      sendFileInline(name, path).getOrElse(NotFound("Resource not found [" + path + "]"))
+    }
+
+    case GET(p"/webjars/$webjar/$path*") => Action {
+      val resource = Option(webjarLocator.getFullPathExact(webjar, path))
+      resource.fold[Result](NotFound)(Ok.sendResource(_))
+    }
+
+    case GET(p"/$name/api/$path*") if nameExists(name) => Action {
+      sendFileInline(name, "api/" + path).getOrElse(NotFound("API doc resource not found [" + path + "]"))
+    }
+
+    case _ => Action {
+      Redirect("/")
+    }
   }
 
-  private def sendFileInline(repo: FileRepository, path: String): Option[Result] = {
-    repo.handleFile(path) { handle =>
-      Ok.sendEntity(
-        HttpEntity.Streamed(
-          StreamConverters.fromInputStream(() => handle.is),
-          Some(handle.size),
-          MimeTypes.forFileName(handle.name).orElse(Some(ContentTypes.BINARY))
+  Runtime.getRuntime.addShutdownHook(new Thread {
+    override def run() = server.stop()
+  })
+
+  private def sendFileInline(docsName: String, path: String): Option[Result] = {
+    docs.get(docsName).flatMap { doc =>
+      doc.repo.handleFile(path) { handle =>
+        Ok.sendEntity(
+          HttpEntity.Streamed(
+            StreamConverters.fromInputStream(() => handle.is),
+            Some(handle.size),
+            MimeTypes.forFileName(handle.name).orElse(Some(ContentTypes.BINARY))
+          )
         )
-      )
+      }
     }
   }
 }

@@ -30,12 +30,16 @@ object LightbendMarkdownValidation {
    *
    * This is the main markdown report for validating markdown docs.
    */
-  case class MarkdownRefReport(markdownFiles: Seq[File],
+  case class MarkdownRefReport(
+    name: String,
+    docPaths: Seq[DocPath],
+    markdownFiles: Seq[(String, File)],
     wikiLinks: Seq[LinkRef],
     resourceLinks: Seq[LinkRef],
     codeSamples: Seq[CodeSampleRef],
     relativeLinks: Seq[LinkRef],
-    externalLinks: Seq[LinkRef])
+    externalLinks: Seq[LinkRef]
+  )
 
   case class LinkRef(link: String, file: File, position: Int)
   case class CodeSampleRef(source: String, segment: String, file: File, sourcePosition: Int, segmentPosition: Int)
@@ -58,11 +62,18 @@ object LightbendMarkdownValidation {
     sourcePosition: Int, segmentPosition: Int)
 
 
-  val generateMarkdownRefReportTask = Def.task {
+  val generateMarkdownRefReportsTask = Def.task {
+    (markdownDocumentation in markdownGenerateRefReports).value.map { doc =>
+      generateMarkdownRefReport(markdownDocumentationRoot.value, doc.name, doc.docsPaths)
+    }
+  }
 
-    val base = markdownManualPath.value
-
-    val markdownFiles = (base ** "*.md").get
+  private def generateMarkdownRefReport(documentationRoot: File, name: String, docPaths: Seq[DocPath]): MarkdownRefReport = {
+    val markdownFiles: Seq[(String, File)] = docPaths.flatMap {
+      case DocPath(base, _) => (base ** "*.md").get.map { file =>
+        file.getParentFile.getCanonicalPath.stripPrefix(base.getCanonicalPath).stripPrefix("/") + "/" -> file
+      }
+    }
 
     val wikiLinks = mutable.ListBuffer[LinkRef]()
     val resourceLinks = mutable.ListBuffer[LinkRef]()
@@ -76,7 +87,7 @@ object LightbendMarkdownValidation {
       path
     }
 
-    def parseMarkdownFile(markdownFile: File): String = {
+    def parseMarkdownFile(prefix: String, markdownFile: File): String = {
 
       val processor = new PegDownProcessor(Extensions.ALL, PegDownPlugins.builder()
         .withPlugin(classOf[CodeReferenceParser]).build)
@@ -99,8 +110,7 @@ object LightbendMarkdownValidation {
                 case absolute if absolute.startsWith("/") =>
                   resourceLinks += LinkRef("manual" + absolute, markdownFile, node.getStartIndex + 2)
                 case relative =>
-                  val link = markdownFile.getParentFile.getCanonicalPath.stripPrefix(base.getCanonicalPath).stripPrefix("/") + "/" + relative
-                  resourceLinks += LinkRef(link, markdownFile, node.getStartIndex + 2)
+                  resourceLinks += LinkRef(s"$prefix$relative", markdownFile, node.getStartIndex + 2)
               }
 
             case link =>
@@ -138,7 +148,7 @@ object LightbendMarkdownValidation {
             val sourceFile = if (source.startsWith("/")) {
               source.drop(1)
             } else {
-              markdownFile.getParentFile.getCanonicalPath.stripPrefix(base.getCanonicalPath).stripPrefix("/") + "/" + source
+              s"$prefix$source"
             }
 
             val sourcePos = code.getStartIndex + code.getLabel.length + 4
@@ -160,9 +170,9 @@ object LightbendMarkdownValidation {
         .toHtml(astRoot)
     }
 
-    markdownFiles.foreach(parseMarkdownFile)
+    markdownFiles.foreach((parseMarkdownFile _).tupled)
 
-    MarkdownRefReport(markdownFiles, wikiLinks.toSeq, resourceLinks.toSeq, codeSamples.toSeq, relativeLinks.toSeq, externalLinks.toSeq)
+    MarkdownRefReport(name, docPaths, markdownFiles, wikiLinks, resourceLinks, codeSamples, relativeLinks, externalLinks)
   }
 
   private def extractCodeSamples(filename: String, markdownSource: String): FileWithCodeSamples = {
@@ -211,18 +221,26 @@ object LightbendMarkdownValidation {
   }
 
   val validateDocsTask = Def.task {
-    val report = markdownGenerateRefReport.value
     val log = streams.value.log
-    val docPaths = markdownDocPaths.value
 
-    val repo = new AggregateFileRepository(docPaths.map {
-      case (path, "." | "") => new FilesystemRepository(path)
-      case (path, prefix) => new PrefixedRepository(prefix + "/", new FilesystemRepository(path))
+    val failed = markdownGenerateRefReports.value.map { report =>
+      validateDocs(report, log)
+    }.reduce(_ || _)
+
+    if (failed) {
+      throw new RuntimeException("Documentation validation failed")
+    }
+  }
+
+  private def validateDocs(report: MarkdownRefReport, log: Logger): Boolean = {
+    val repo = new AggregateFileRepository(report.docPaths.map {
+      case DocPath(path, "." | "") => new FilesystemRepository(path)
+      case DocPath(path, prefix) => new PrefixedRepository(prefix + "/", new FilesystemRepository(path))
     })
 
     val pageIndex = PageIndex.parseFrom(repo, "", None)
 
-    val pages = report.markdownFiles.map(f => f.getName.dropRight(3) -> f).toMap
+    val pages = report.markdownFiles.map(f => f._2.getName.dropRight(3) -> f).toMap
 
     var failed = false
 
@@ -249,9 +267,11 @@ object LightbendMarkdownValidation {
     }
 
     val duplicates = report.markdownFiles
-      .filterNot(_.getName.startsWith("_"))
-      .groupBy(s => s.getName)
+      .filterNot(_._2.getName.startsWith("_"))
+      .groupBy(s => s._2.getName)
       .filter(v => v._2.size > 1)
+
+    log.info("Validating " + report.name + " documentation...")
 
     doAssertion("Duplicate markdown file name test", duplicates.toSeq) {
       duplicates.foreach { d =>
@@ -325,15 +345,19 @@ object LightbendMarkdownValidation {
       }
     }
 
-    if (failed) {
-      throw new RuntimeException("Documentation validation failed")
-    }
+    log.info("")
+
+    failed
   }
 
   val validateExternalLinksTask = Def.task {
     val log = streams.value.log
-    val report = markdownGenerateRefReport.value
+    markdownGenerateRefReports.value.foreach { report =>
+      validateExternalLinks(report, log)
+    }
+  }
 
+  private def validateExternalLinks(report: MarkdownRefReport, log: Logger): Unit = {
     val grouped = report.externalLinks
       .groupBy { _.link }
       .filterNot { e => e._1.startsWith("http://localhost:") || e._1.contains("example.com") }

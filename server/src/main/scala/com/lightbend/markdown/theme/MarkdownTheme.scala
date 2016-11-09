@@ -13,7 +13,7 @@ trait MarkdownTheme {
 
   /** Render a page of documentation */
   def renderPage(projectName: Option[String], title: Option[String], home: String, content: Html,
-                 sidebar: Option[Html], apiDocs: Seq[(String, String)], sourceUrl: Option[String]): Html =
+                 sidebar: Option[Html], breadcrumbs: Option[Html], apiDocs: Seq[(String, String)], sourceUrl: Option[String]): Html =
     html.documentation(projectName, title, home, content, sidebar, apiDocs, sourceUrl)
 
   /** Render the sidebar */
@@ -54,7 +54,7 @@ object DefaultMarkdownTheme extends MarkdownTheme
 
 trait BareTheme extends MarkdownTheme {
   override def renderPage(projectName: Option[String], title: Option[String], home: String, content: Html,
-                          sidebar: Option[Html], apiDocs: Seq[(String, String)], sourceUrl: Option[String]): Html = content
+                          sidebar: Option[Html], breadcrumbs: Option[Html], apiDocs: Seq[(String, String)], sourceUrl: Option[String]): Html = content
   override def renderSidebar(hierarchy: List[Toc]): Html = Html("")
   override def renderNextLink(toc: TocTree): Html = Html("")
   override def renderBreadcrumbs(hierarchy: List[Toc]): Html = Html("")
