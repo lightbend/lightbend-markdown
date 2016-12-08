@@ -239,7 +239,7 @@ object LightbendMarkdown extends AutoPlugin {
     val outputDir = (target in markdownGenerateAllDocumentation).value
 
     val docsConfig = GenerateDocumentationConfig(outputDir, markdownGenerateIndex.value,
-      DocumentationConfiguration(markdownDocumentationRoot.value, Some(name.value), markdownServerTheme.value,
+      DocumentationConfiguration(markdownDocumentationRoot.value, Some(name.value), markdownGenerateTheme.value,
         markdownSourceUrl.value.map(_.toString), markdownDocumentation.value))
 
     val options = Seq(
