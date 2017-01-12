@@ -3,6 +3,9 @@
  */
 package com.lightbend.markdown.server
 
+import java.io.File
+import java.nio.file.Files
+
 import akka.stream.scaladsl.StreamConverters
 import com.lightbend.markdown.{DocPath, Documentation, DocumentationServerConfig}
 import com.lightbend.markdown.theme.MarkdownTheme
@@ -23,7 +26,8 @@ import play.twirl.api.Html
   */
 object DocumentationServer extends App {
 
-  val configJson = Json.parse(args.head)
+  val jsonPath = new File(args.head)
+  val configJson = Json.parse(Files.readAllBytes(jsonPath.toPath))
   val serverConfig = configJson.as[DocumentationServerConfig]
 
   import serverConfig._

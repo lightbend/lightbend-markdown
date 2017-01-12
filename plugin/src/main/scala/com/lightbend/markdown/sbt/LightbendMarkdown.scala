@@ -216,10 +216,13 @@ object LightbendMarkdown extends AutoPlugin {
       markdownDocumentationRoot.value, Some(name.value), markdownServerTheme.value,
       markdownSourceUrl.value.map(_.toString), markdownDocumentation.value))
 
+    val docsConfigPath = target.value / "docs-server-config.json"
+    IO.write(docsConfigPath, Json.stringify(Json.toJson(docsConfig)))
+
     val options = Seq(
       "-classpath", classpathOption,
       "com.lightbend.markdown.server.DocumentationServer",
-      Json.stringify(Json.toJson(docsConfig))
+      docsConfigPath.getAbsolutePath
     )
     val process = Fork.java.fork(ForkOptions(), options)
 
@@ -242,10 +245,13 @@ object LightbendMarkdown extends AutoPlugin {
       DocumentationConfiguration(markdownDocumentationRoot.value, Some(name.value), markdownGenerateTheme.value,
         markdownSourceUrl.value.map(_.toString), markdownDocumentation.value))
 
+    val docsConfigPath = target.value / "docs-generation-config.json"
+    IO.write(docsConfigPath, Json.stringify(Json.toJson(docsConfig)))
+
     val options = Seq(
       "-classpath", classpathOption,
       "com.lightbend.markdown.generator.GenerateSite",
-      Json.stringify(Json.toJson(docsConfig))
+      docsConfigPath.getAbsolutePath
     )
 
     val process = Fork.java.fork(ForkOptions(), options)

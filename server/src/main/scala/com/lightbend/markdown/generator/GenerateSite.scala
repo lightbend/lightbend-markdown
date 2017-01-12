@@ -17,7 +17,8 @@ import play.twirl.api.{Content, Html}
 
 object GenerateSite extends App {
 
-  val configJson = Json.parse(args.head)
+  val jsonPath = new File(args.head)
+  val configJson = Json.parse(Files.readAllBytes(jsonPath.toPath))
   val generateConfig = configJson.as[GenerateDocumentationConfig]
 
   import generateConfig._
