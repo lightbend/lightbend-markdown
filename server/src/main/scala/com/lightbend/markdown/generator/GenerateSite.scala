@@ -77,7 +77,7 @@ object GenerateSite extends App {
       def convertToc(toc: TocTree): TOC = {
         toc match {
           case childToc: Toc =>
-            TOC(childToc.title, None, None, nostyle = false, None, childToc.nodes.map(_._2).map(convertToc))
+            TOC(childToc.title, None, None, nostyle = false, None, childToc.nodes.map(_._2).map(convertToc), None)
           case page: TocPage =>
             val sourcePath = for {
               url <- sourceUrl
@@ -87,7 +87,7 @@ object GenerateSite extends App {
               s"$url$path"
             }
 
-            TOC(page.title, Some(page.page + ".html"), sourcePath, nostyle = false, None, Nil)
+            TOC(page.title, Some(page.page + ".html"), sourcePath, nostyle = false, None, Nil, page.next.map(_.map(_ + ".html")))
         }
       }
 

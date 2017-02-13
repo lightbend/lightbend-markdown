@@ -24,6 +24,10 @@ trait MarkdownTheme {
   def renderNextLink(toc: play.doc.TocTree): Html =
     html.nextLink(toc)
 
+  /** Render the next links */
+  def renderNextLinks(toc: List[play.doc.TocTree]): Html =
+    Html(toc.foldLeft("")((html, toc) => html + renderNextLink(toc).body))
+
   /** Render the table of contents */
   def renderToc(toc: Toc): Html =
     html.toc(toc)
@@ -34,6 +38,7 @@ trait MarkdownTheme {
   /** The markdown theme as a Play doc templates theme */
   final val playDocTemplates: PlayDocTemplates = new PlayDocTemplates {
     override def nextLink(toc: TocTree): String = renderNextLink(toc).body
+    override def nextLinks(toc: List[TocTree]): String = renderNextLinks(toc).body
     override def sidebar(hierarchy: List[Toc]): String = renderSidebar(hierarchy).body
     override def toc(toc: Toc): String = renderToc(toc).body
     override def breadcrumbs(hierarchy: List[Toc]): String = renderBreadcrumbs(hierarchy).body
@@ -57,6 +62,7 @@ trait BareTheme extends MarkdownTheme {
                           sidebar: Option[Html], breadcrumbs: Option[Html], apiDocs: Seq[(String, String)], sourceUrl: Option[String]): Html = content
   override def renderSidebar(hierarchy: List[Toc]): Html = Html("")
   override def renderNextLink(toc: TocTree): Html = Html("")
+  override def renderNextLinks(toc: List[TocTree]): Html = Html("")
   override def renderBreadcrumbs(hierarchy: List[Toc]): Html = Html("")
 }
 

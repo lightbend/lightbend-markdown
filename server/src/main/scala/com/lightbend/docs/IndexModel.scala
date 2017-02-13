@@ -42,7 +42,7 @@ object Resources {
 }
 
 case class Context(title: String, parent: Option[Context], sourceUrl: Option[String], nostyle: Boolean,
-                   resources: Resources, children: Seq[(String, String)], prefix: String)
+                   resources: Resources, children: Seq[(String, String)], prefix: String, nextUrls: Option[Seq[String]])
 
 /**
   * The table of contents.  A recursive structure.
@@ -53,8 +53,9 @@ case class Context(title: String, parent: Option[Context], sourceUrl: Option[Str
   * @param nostyle Whether this page should be styled or not. Some pages in the documentation should not be styled.
   * @param resources The resources, eg stylesheets/scripts, that need to be added to the head section of pages rendered.
   * @param children The children of this TOC section.
+  * @param nextUrls The URLs of the next pages, if overridden from the default navigation.
   */
-case class TOC(title: String, url: Option[String], sourceUrl: Option[String], nostyle: Boolean, resources: Option[Resources], children: Seq[TOC]) {
+case class TOC(title: String, url: Option[String], sourceUrl: Option[String], nostyle: Boolean, resources: Option[Resources], children: Seq[TOC], nextUrls: Option[Seq[String]]) {
   lazy val mappings: Map[String, Context] = mkMappings(None, Resources.empty)
 
   private def mkMappings(parent: Option[Context], rsrc: Resources): Map[String, Context] = {
@@ -62,12 +63,12 @@ case class TOC(title: String, url: Option[String], sourceUrl: Option[String], no
     val childLinks = children map (toc => toc.title -> findLink(toc))
     val (myMap, me) = url match {
       case None =>
-        Map.empty[String, Context] -> Context(title, parent, sourceUrl, nostyle, myresources, childLinks, "")
+        Map.empty[String, Context] -> Context(title, parent, sourceUrl, nostyle, myresources, childLinks, "", nextUrls)
       case Some(u) =>
         val depth = u.count(_ == '/')
         val prefix = "../" * depth
         val mappedResources = myresources.map(addPrefix(prefix))
-        val me = Context(title, parent, sourceUrl, nostyle, mappedResources, childLinks, prefix)
+        val me = Context(title, parent, sourceUrl, nostyle, mappedResources, childLinks, prefix, nextUrls)
         Map(u -> me) -> me
     }
     children.foldLeft(myMap)((map, toc) => map ++ toc.mkMappings(Some(me), myresources))
@@ -96,7 +97,8 @@ object TOC {
       (__ \ "sourceUrl").readNullable[String] and
       (__ \ "nostyle").readNullable[Boolean].map(_ getOrElse false) and
       (__ \ "resources").readNullable[Resources] and
-      (__ \ "children").lazyReadNullable(Reads.seq[TOC](jsonReads)).map(_.getOrElse(Nil))
+      (__ \ "children").lazyReadNullable(Reads.seq[TOC](jsonReads)).map(_.getOrElse(Nil)) and
+      (__ \ "nextUrls").readNullable[Seq[String]]
     )(TOC.apply _)
   implicit lazy val jsonWrites: Writes[TOC] = (
     (__ \ "title").write[String] and
@@ -104,8 +106,9 @@ object TOC {
       (__ \ "sourceUrl").writeNullable[String] and
       (__ \ "nostyle").writeNullable[Boolean] and
       (__ \ "resources").writeNullable[Resources] and
-      (__ \ "children").lazyWriteNullable(Writes.seq[TOC](jsonWrites))
+      (__ \ "children").lazyWriteNullable(Writes.seq[TOC](jsonWrites)) and
+      (__ \ "nextUrls").writeNullable[Seq[String]]
     )(unlift(TOC.unapply) andThen {
-    case (title, url, sourceUrl, nostyle, res, children) =>
-      (title, url, sourceUrl, if (nostyle) Some(true) else None, res, if (children.isEmpty) None else Some(children)) })
+    case (title, url, sourceUrl, nostyle, res, children, nextUrls) =>
+      (title, url, sourceUrl, if (nostyle) Some(true) else None, res, if (children.isEmpty) None else Some(children), nextUrls) })
 }

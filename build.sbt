@@ -7,7 +7,7 @@ lazy val root = (project in file("."))
     publishTo := Some(Resolver.file("dummy", target.value / "dummy"))
   ).aggregate(server, plugin, theme)
 
-lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.6.0"
+lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.8.0"
 
 lazy val server = (project in file("server"))
   .settings(common: _*)
