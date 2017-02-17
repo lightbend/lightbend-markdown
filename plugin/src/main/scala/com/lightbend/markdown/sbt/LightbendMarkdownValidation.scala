@@ -38,10 +38,11 @@ object LightbendMarkdownValidation {
     resourceLinks: Seq[LinkRef],
     codeSamples: Seq[CodeSampleRef],
     relativeLinks: Seq[LinkRef],
-    externalLinks: Seq[LinkRef]
+    externalLinks: Seq[LinkRef],
+    pageAnchors: Map[String, Set[String]]
   )
 
-  case class LinkRef(link: String, file: File, position: Int)
+  case class LinkRef(link: String, fragment: Option[String], file: File, position: Int)
   case class CodeSampleRef(source: String, segment: String, file: File, sourcePosition: Int, segmentPosition: Int)
 
   /**
@@ -80,17 +81,19 @@ object LightbendMarkdownValidation {
     val codeSamples = mutable.ListBuffer[CodeSampleRef]()
     val relativeLinks = mutable.ListBuffer[LinkRef]()
     val externalLinks = mutable.ListBuffer[LinkRef]()
+    val pageAnchors = mutable.HashMap[String, Set[String]]()
 
-    def stripFragment(path: String) = if (path.contains("#")) {
-      path.dropRight(path.length - path.indexOf('#'))
-    } else {
-      path
+    def extractFragment(path: String): (String, Option[String]) = path.split("#", 2) match {
+      case Array(link) => (link, None)
+      case Array(link, fragment) => (link, Some(fragment))
     }
 
-    def parseMarkdownFile(prefix: String, markdownFile: File): String = {
+    def parseMarkdownFile(prefix: String, markdownFile: File): Unit = {
 
       val processor = new PegDownProcessor(Extensions.ALL, PegDownPlugins.builder()
         .withPlugin(classOf[CodeReferenceParser]).build)
+
+      val currentPage = markdownFile.getName.stripSuffix(".md")
 
       // Link renderer will also verify that all wiki links exist
       val linkRenderer = new LinkRenderer {
@@ -100,21 +103,21 @@ object LightbendMarkdownValidation {
             case link if link.contains("|") =>
               val parts = link.split('|')
               val desc = parts.head
-              val page = stripFragment(parts.tail.head.trim)
-              wikiLinks += LinkRef(page, markdownFile, node.getStartIndex + desc.length + 3)
+              val (page, fragment) = extractFragment(parts.tail.head.trim)
+              wikiLinks += LinkRef(page, fragment, markdownFile, node.getStartIndex + desc.length + 3)
 
             case image if image.endsWith(".png") =>
               image match {
                 case full if full.startsWith("http://") =>
-                  externalLinks += LinkRef(full, markdownFile, node.getStartIndex + 2)
+                  externalLinks += LinkRef(full, None, markdownFile, node.getStartIndex + 2)
                 case absolute if absolute.startsWith("/") =>
-                  resourceLinks += LinkRef("manual" + absolute, markdownFile, node.getStartIndex + 2)
+                  resourceLinks += LinkRef("manual" + absolute, None, markdownFile, node.getStartIndex + 2)
                 case relative =>
-                  resourceLinks += LinkRef(s"$prefix$relative", markdownFile, node.getStartIndex + 2)
+                  resourceLinks += LinkRef(s"$prefix$relative", None, markdownFile, node.getStartIndex + 2)
               }
 
             case link =>
-              wikiLinks += LinkRef(link.trim, markdownFile, node.getStartIndex + 2)
+              wikiLinks += LinkRef(link.trim, None, markdownFile, node.getStartIndex + 2)
 
           }
           new LinkRenderer.Rendering("foo", "bar")
@@ -126,9 +129,12 @@ object LightbendMarkdownValidation {
         private def addLink(url: String, node: Node, offset: Int) = {
           url match {
             case full if full.startsWith("http://") || full.startsWith("https://") =>
-              externalLinks += LinkRef(full, markdownFile, node.getStartIndex + offset)
-            case fragment if fragment.startsWith("#") => // ignore fragments, no validation of them for now
-            case relative => relativeLinks += LinkRef(relative, markdownFile, node.getStartIndex + offset)
+              externalLinks += LinkRef(full, None, markdownFile, node.getStartIndex + offset)
+            case fragment if fragment.startsWith("#") =>
+              wikiLinks += LinkRef(currentPage, Some(fragment.drop(1)), markdownFile, node.getStartIndex + offset)
+            case relative =>
+              val (link, fragment) = extractFragment(relative)
+              relativeLinks += LinkRef(link, fragment, markdownFile, node.getStartIndex + offset)
           }
           new LinkRenderer.Rendering("foo", "bar")
         }
@@ -166,13 +172,43 @@ object LightbendMarkdownValidation {
       }
 
       val astRoot = processor.parseMarkdown(IO.read(markdownFile).toCharArray)
-      new ToHtmlSerializer(linkRenderer, java.util.Arrays.asList[ToHtmlSerializerPlugin](codeReferenceSerializer))
-        .toHtml(astRoot)
+
+      // Copied from play-doc
+      var headingsSeen = Map.empty[String, Int]
+      def headingToAnchor(heading: String) = {
+        val anchor = FastEncoder.encode(heading.replace(' ', '-'))
+        headingsSeen.get(anchor).fold {
+          headingsSeen += anchor -> 1
+          anchor
+        } { seen =>
+          headingsSeen += anchor -> (seen + 1)
+          anchor + seen
+        }
+      }
+
+      val anchors = mutable.HashSet[String]()
+
+      new ToHtmlSerializer(linkRenderer, java.util.Arrays.asList[ToHtmlSerializerPlugin](codeReferenceSerializer)) {
+        // copied from play-doc
+        override def visit(node: HeaderNode): Unit = {
+          def collectTextNodes(node: Node): Seq[String] = {
+            import scala.collection.JavaConverters._
+            node.getChildren.asScala.collect {
+              case t: TextNode => Seq(t.getText)
+              case other => collectTextNodes(other)
+            }.flatten
+          }
+          val title = collectTextNodes(node).mkString
+          anchors += headingToAnchor(title)
+        }
+      }.toHtml(astRoot)
+
+      pageAnchors += (currentPage -> anchors.toSet)
     }
 
     markdownFiles.foreach((parseMarkdownFile _).tupled)
 
-    MarkdownRefReport(name, docPaths, markdownFiles, wikiLinks, resourceLinks, codeSamples, relativeLinks, externalLinks)
+    MarkdownRefReport(name, docPaths, markdownFiles, wikiLinks, resourceLinks, codeSamples, relativeLinks, externalLinks, pageAnchors.toMap)
   }
 
   private def extractCodeSamples(filename: String, markdownSource: String): FileWithCodeSamples = {
@@ -261,7 +297,7 @@ object LightbendMarkdownValidation {
     def assertLinksNotMissing(desc: String, links: Seq[LinkRef], errorMessage: String): Unit = {
       doAssertion(desc, links) {
         links.foreach { link =>
-          logErrorAtLocation(log, link.file, link.position, errorMessage + " " + link.link)
+          logErrorAtLocation(log, link.file, link.position, errorMessage + " " + link.link + link.fragment.fold("")("#" + _))
         }
       }
     }
@@ -283,19 +319,29 @@ object LightbendMarkdownValidation {
       pages.contains(link.link) || repo.findFileWithName(link.link + ".md").nonEmpty
     }, "Could not find link")
 
+    def anchorCheck(link: LinkRef) = {
+      link.fragment match {
+        case Some(fragment) =>
+          report.pageAnchors.get(link.link).exists(_.contains(fragment))
+        case None => true
+      }
+    }
+
+    assertLinksNotMissing("Missing anchor test", report.wikiLinks.filterNot(anchorCheck), "Could not find anchor")
+
     def relativeLinkOk(link: LinkRef) = {
       link match {
-        case badScalaApi if badScalaApi.link.startsWith("api/scala/index.html#") =>
+        case LinkRef("api/scala/index.html", Some(_), _, _) =>
           println("Don't use segment links from the index.html page to scaladocs, use path links, ie:")
           println("  api/scala/index.html#play.api.Application@requestHandler")
           println("should become:")
           println("  api/scala/play/api/Application.html#requestHandler")
           false
-        case scalaApi if scalaApi.link.startsWith("api/scala/") => fileExists(scalaApi.link.split('#').head)
+        case scalaApi if scalaApi.link.startsWith("api/scala/") => fileExists(scalaApi.link)
         case javaApiFrames if javaApiFrames.link.contains("index.html?") =>
           val prefix = javaApiFrames.link.take(javaApiFrames.link.indexOf("index.html?"))
-          fileExists(prefix + javaApiFrames.link.split('#').head.split('?').last)
-        case otherApi if otherApi.link.startsWith("api/") => fileExists(otherApi.link.split('#').head)
+          fileExists(prefix + javaApiFrames.link.split('?').last)
+        case otherApi if otherApi.link.startsWith("api/") => fileExists(otherApi.link)
         case resource if resource.link.startsWith("resources/") =>
           fileExists(resource.link.stripPrefix("resources/"))
         case bad => false
@@ -314,7 +360,7 @@ object LightbendMarkdownValidation {
     val (existing, nonExisting) = report.codeSamples.partition(sample => fileExists(sample.source))
 
     assertLinksNotMissing("Missing source files test",
-      nonExisting.map(sample => LinkRef(sample.source, sample.file, sample.sourcePosition)),
+      nonExisting.map(sample => LinkRef(sample.source, None, sample.file, sample.sourcePosition)),
       "Could not find source file")
 
     def segmentExists(sample: CodeSampleRef) = {
@@ -330,10 +376,8 @@ object LightbendMarkdownValidation {
     }
 
     assertLinksNotMissing("Missing source segments test", existing.collect {
-      case sample if !segmentExists(sample) => LinkRef(sample.segment, sample.file, sample.segmentPosition)
+      case sample if !segmentExists(sample) => LinkRef(sample.segment, None, sample.file, sample.segmentPosition)
     }, "Could not find source segment")
-
-    val allLinks = report.wikiLinks.map(_.link).toSet
 
     pageIndex.foreach { idx =>
       // Make sure all pages are in the page index
