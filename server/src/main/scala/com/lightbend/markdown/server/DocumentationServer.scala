@@ -10,8 +10,7 @@ import akka.stream.scaladsl.StreamConverters
 import com.lightbend.markdown.{DocPath, Documentation, DocumentationServerConfig}
 import com.lightbend.markdown.theme.MarkdownTheme
 import org.webjars.WebJarAssetLocator
-import play.api.http.{ContentTypes, HttpEntity}
-import play.api.libs.MimeTypes
+import play.api.http._
 import play.api.libs.json.Json
 import play.api.mvc.Results._
 import play.api.mvc._
@@ -56,49 +55,54 @@ object DocumentationServer extends App {
 
   val webjarLocator = new WebJarAssetLocator()
 
-  val server = NettyServer.fromRouter(ServerConfig(rootDir = projectPath, port = Some(port))) {
-    case GET(p"/") => Action {
-      Ok(markdownTheme.renderPage(projectName, None, "/", Html(
-        documentation.map { d =>
-          s"""<li><a href="/${d.name}/${d.homePage}">${d.homePageTitle}</a></li>"""
-        }.mkString("<p>Select your language:</p><ul>", "", "</ul>")
-      ), None, None, Nil, None))
-    }
-
-    case GET(p"/$name/$pageName.html") if nameExists(name) => Action {
-      (for {
-        doc <- docs.get(name)
-        page <- playDoc(doc).renderPage(pageName)
-      } yield {
-
-        val sourcePath = for {
-          url <- sourceUrl
-          path <- SourceFinder.findPathFor(documentationRoot, doc.documentation.docsPaths, page.path)
-        } yield s"$url$path"
-
-        Ok(markdownTheme.renderPage(projectName, None, doc.documentation.homePage,
-          Html(page.html), page.sidebarHtml.map(Html.apply), page.breadcrumbsHtml.map(Html.apply), doc.documentation.apiDocs.toSeq, sourcePath))
-      }).getOrElse {
-        NotFound(markdownTheme.renderPage(projectName, None, "/", Html("Page " + pageName + " not found."),
-          None, None, Nil, None))
+  val akkaHttpServerConfig = ServerConfig(rootDir = projectPath, port = Some(port))
+  val server = AkkaHttpServer.fromRouterWithComponents(akkaHttpServerConfig) { components =>
+    implicit val mimeTypes = components.fileMimeTypes
+    import components.{defaultActionBuilder => Action}
+    {
+      case GET(p"/") => Action {
+        Ok(markdownTheme.renderPage(projectName, None, "/", Html(
+          documentation.map { d =>
+            s"""<li><a href="/${d.name}/${d.homePage}">${d.homePageTitle}</a></li>"""
+          }.mkString("<p>Select your language:</p><ul>", "", "</ul>")
+        ), None, None, Nil, None))
       }
-    }
 
-    case GET(p"/$name/resources/$path*") if nameExists(name) => Action {
-      sendFileInline(name, path).getOrElse(NotFound("Resource not found [" + path + "]"))
-    }
+      case GET(p"/$name/$pageName.html") if nameExists(name) => Action {
+        (for {
+          doc <- docs.get(name)
+          page <- playDoc(doc).renderPage(pageName)
+        } yield {
 
-    case GET(p"/webjars/$webjar/$path*") => Action {
-      val resource = Option(webjarLocator.getFullPathExact(webjar, path))
-      resource.fold[Result](NotFound)(Ok.sendResource(_))
-    }
+          val sourcePath = for {
+            url <- sourceUrl
+            path <- SourceFinder.findPathFor(documentationRoot, doc.documentation.docsPaths, page.path)
+          } yield s"$url$path"
 
-    case GET(p"/$name/api/$path*") if nameExists(name) => Action {
-      sendFileInline(name, "api/" + path).getOrElse(NotFound("API doc resource not found [" + path + "]"))
-    }
+          Ok(markdownTheme.renderPage(projectName, None, doc.documentation.homePage,
+            Html(page.html), page.sidebarHtml.map(Html.apply), page.breadcrumbsHtml.map(Html.apply), doc.documentation.apiDocs.toSeq, sourcePath))
+        }).getOrElse {
+          NotFound(markdownTheme.renderPage(projectName, None, "/", Html("Page " + pageName + " not found."),
+            None, None, Nil, None))
+        }
+      }
 
-    case _ => Action {
-      Redirect("/")
+      case GET(p"/$name/resources/$path*") if nameExists(name) => Action {
+        sendFileInline(name, path).getOrElse(NotFound("Resource not found [" + path + "]"))
+      }
+
+      case GET(p"/webjars/$webjar/$path*") => Action {
+        val resource = Option(webjarLocator.getFullPathExact(webjar, path))
+        resource.fold[Result](NotFound)(Ok.sendResource(_))
+      }
+
+      case GET(p"/$name/api/$path*") if nameExists(name) => Action {
+        sendFileInline(name, "api/" + path).getOrElse(NotFound("API doc resource not found [" + path + "]"))
+      }
+
+      case _ => Action {
+        Redirect("/")
+      }
     }
   }
 
@@ -106,14 +110,14 @@ object DocumentationServer extends App {
     override def run() = server.stop()
   })
 
-  private def sendFileInline(docsName: String, path: String): Option[Result] = {
+  private def sendFileInline(docsName: String, path: String)(implicit mt: FileMimeTypes): Option[Result] = {
     docs.get(docsName).flatMap { doc =>
       doc.repo.handleFile(path) { handle =>
         Ok.sendEntity(
           HttpEntity.Streamed(
             StreamConverters.fromInputStream(() => handle.is),
             Some(handle.size),
-            MimeTypes.forFileName(handle.name).orElse(Some(ContentTypes.BINARY))
+            mt.forFileName(handle.name).orElse(Some(ContentTypes.BINARY))
           )
         )
       }
