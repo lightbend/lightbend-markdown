@@ -141,13 +141,13 @@ object LightbendMarkdown extends AutoPlugin {
     markdownValidateExternalLinks <<= LightbendMarkdownValidation.validateExternalLinksTask,
     libraryDependencies += {
       val version = LightbendMarkdownVersion
-      val artifact = if (markdownUseBuiltinTheme.value) {
-        "lightbend-markdown-theme-builtin_2.11"
-      } else {
-        "lightbend-markdown-server_2.11"
-      }
-      "com.lightbend.markdown" % artifact % version % RunMarkdown.name
-
+      val artifact =
+        if (markdownUseBuiltinTheme.value) {
+          "lightbend-markdown-theme-builtin"
+        } else {
+          "lightbend-markdown-server"
+        }
+      "com.lightbend.markdown" %% artifact % version % RunMarkdown.name
     },
 
     internalDependencyClasspath in RunMarkdown <<= (thisProjectRef, settingsData, buildDependencies) flatMap { (tpf, sd, bd) =>
