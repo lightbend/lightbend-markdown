@@ -147,7 +147,7 @@ object LightbendMarkdown extends AutoPlugin {
         } else {
           "lightbend-markdown-server"
         }
-      "com.lightbend.markdown" % s"${artifact}_${scalaBinaryVersion.value}" % version % RunMarkdown.name
+      "com.lightbend.markdown" %% artifact % version % RunMarkdown.name
     },
 
     internalDependencyClasspath in RunMarkdown <<= (thisProjectRef, settingsData, buildDependencies) flatMap { (tpf, sd, bd) =>
