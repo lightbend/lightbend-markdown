@@ -77,7 +77,6 @@ def common: Seq[Setting[_]] = Seq(
   bintrayPackage := "lightbend-markdown",
   bintrayReleaseOnPublish := false,
   publishMavenStyle := false,
-  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
 
   releaseProcess := Seq[ReleaseStep](
     checkSnapshotDependencies,
@@ -86,36 +85,13 @@ def common: Seq[Setting[_]] = Seq(
     setReleaseVersion,
     commitReleaseVersion,
     tagRelease,
-    releaseStepCommandAndRemaining("+publishSigned"),
+    publishArtifacts,
     releaseStepTask(bintrayRelease in thisProjectRef.value),
     setNextVersion,
     commitNextVersion,
     pushChanges
   )
 )
-
-/**
- * sbt release's releaseStepCommand does not execute remaining commands, which sbt-doge relies on
- */
-def releaseStepCommandAndRemaining(command: String): State => State = { originalState =>
-  // Capture current remaining commands
-  val originalRemaining = originalState.remainingCommands
-
-  def runCommand(command: String, state: State): State = {
-    import sbt.complete.Parser
-    val newState = Parser.parse(command, state.combinedParser) match {
-      case Right(cmd) => cmd()
-      case Left(msg) => throw sys.error(s"Invalid programmatic input:\n$msg")
-    }
-    if (newState.remainingCommands.isEmpty) {
-      newState
-    } else {
-      runCommand(newState.remainingCommands.head.commandLine, newState.copy(remainingCommands = newState.remainingCommands.tail))
-    }
-  }
-
-  runCommand(command, originalState.copy(remainingCommands = Nil)).copy(remainingCommands = originalRemaining)
-}
 
 def generateVersionFile = Def.task {
   val version = (Keys.version in server).value
