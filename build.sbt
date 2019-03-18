@@ -1,37 +1,34 @@
 val runtimeLibrarySettings = Seq(
-  crossScalaVersions := Seq("2.12.3", "2.11.11"),
+  crossScalaVersions := Seq("2.12.8", "2.11.12"),
   scalaVersion := crossScalaVersions.value.head
 )
 val sbtPluginSettings = Seq(
-  crossScalaVersions := Seq("2.10.6"),
+  crossScalaVersions := Seq("2.12.8"),
   scalaVersion := crossScalaVersions.value.head
 )
 
-val PlayVersion = "2.6.3"
-val PlayJsonVersion = "2.6.3"
+val PlayVersion = "2.7.0"
+val PlayJsonVersion = "2.7.2"
 
 def playLibrary(name: String): ModuleID =
   "com.typesafe.play" %% name % PlayVersion
 
-lazy val root = (project in file("."))
-  .settings(common: _*)
+lazy val `lightbend-markdown` = (project in file("."))
   .settings(
-    name := "lightbend-markdown",
-    publish := {},
-    PgpKeys.publishSigned := {},
-    publishTo := Some(Resolver.file("dummy", target.value / "dummy"))
+    common,
+    crossScalaVersions := Nil,
+    skip in publish := true,
   )
-  .enablePlugins(CrossPerProjectPlugin)
   .aggregate(server, plugin, theme)
 
-lazy val playDoc = "com.typesafe.play" %% "play-doc" % "1.8.1"
+lazy val playDoc = "com.typesafe.play" %% "play-doc" % "2.0.0"
 
 lazy val server = (project in file("server"))
-  .settings(common: _*)
-  .settings(runtimeLibrarySettings: _*)
   .enablePlugins(SbtTwirl)
   .settings(
     name := "lightbend-markdown-server",
+    common,
+    runtimeLibrarySettings,
     libraryDependencies ++= Seq(
       playLibrary("play-akka-http-server"),
       playLibrary("play-logback"),
@@ -42,25 +39,25 @@ lazy val server = (project in file("server"))
   )
 
 lazy val plugin = (project in file("plugin"))
-  .settings(common: _*)
-  .settings(sbtPluginSettings: _*)
+  .enablePlugins(SbtPlugin)
   .settings(
     name := "sbt-lightbend-markdown",
+    common,
+    sbtPluginSettings,
     libraryDependencies ++= Seq(
       "org.webjars" % "webjars-locator-core" % "0.30",
       playDoc,
       "com.typesafe.play" %% "play-json" % PlayJsonVersion
     ),
-    sbtPlugin := true,
-    resourceGenerators in Compile <+= generateVersionFile
+    resourceGenerators in Compile += generateVersionFile.taskValue,
   )
 
 lazy val theme = (project in file("theme"))
   .enablePlugins(SbtWeb, SbtTwirl)
-  .settings(common: _*)
-  .settings(runtimeLibrarySettings: _*)
   .settings(
     name := "lightbend-markdown-builtin-theme",
+    common,
+    runtimeLibrarySettings,
     libraryDependencies ++= Seq(
       "org.webjars" % "jquery" % "1.9.0",
       "org.webjars" % "prettify" % "4-Mar-2013"
@@ -113,7 +110,7 @@ def releaseStepCommandAndRemaining(command: String): State => State = { original
     if (newState.remainingCommands.isEmpty) {
       newState
     } else {
-      runCommand(newState.remainingCommands.head, newState.copy(remainingCommands = newState.remainingCommands.tail))
+      runCommand(newState.remainingCommands.head.commandLine, newState.copy(remainingCommands = newState.remainingCommands.tail))
     }
   }
 

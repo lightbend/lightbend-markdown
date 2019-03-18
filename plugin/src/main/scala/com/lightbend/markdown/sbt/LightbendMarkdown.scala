@@ -10,7 +10,10 @@ import org.webjars.{FileSystemCache, WebJarExtractor}
 import play.api.libs.json._
 import sbt._
 import sbt.Keys._
+import sbt.LightbendMarkdownSbtInternalImplicits._
+import sbt.LightbendMarkdownSbtInternalTerms.{ EvaluateConfigurations, Load }
 import sbt.plugins.JvmPlugin
+import sbt.util.CacheStore
 
 import scala.util.control.NonFatal
 
@@ -135,10 +138,10 @@ object LightbendMarkdown extends AutoPlugin {
     markdownServerTheme := markdownTheme.value,
     markdownGenerateTheme := markdownTheme.value,
     markdownSourceUrl := None,
-    run <<= docsRunSetting,
-    markdownGenerateRefReports <<= LightbendMarkdownValidation.generateMarkdownRefReportsTask,
-    markdownValidateDocs <<= LightbendMarkdownValidation.validateDocsTask,
-    markdownValidateExternalLinks <<= LightbendMarkdownValidation.validateExternalLinksTask,
+    run := docsRunSetting.evaluated,
+    markdownGenerateRefReports := LightbendMarkdownValidation.generateMarkdownRefReportsTask.value,
+    markdownValidateDocs := LightbendMarkdownValidation.validateDocsTask.value,
+    markdownValidateExternalLinks := LightbendMarkdownValidation.validateExternalLinksTask.value,
     libraryDependencies += {
       val version = LightbendMarkdownVersion
       val artifact =
@@ -150,9 +153,16 @@ object LightbendMarkdown extends AutoPlugin {
       "com.lightbend.markdown" %% artifact % version % RunMarkdown.name
     },
 
-    internalDependencyClasspath in RunMarkdown <<= (thisProjectRef, settingsData, buildDependencies) flatMap { (tpf, sd, bd) =>
-      Classpaths.internalDependencies0(tpf, RunMarkdown, RunMarkdown, sd, bd)
-    },
+    internalDependencyClasspath in RunMarkdown := Def.taskDyn {
+      Classpaths.internalDependenciesInit(
+        thisProjectRef.value,
+        RunMarkdown,
+        RunMarkdown,
+        settingsData.value,
+        buildDependencies.value,
+        trackInternalDependencies.value,
+      )
+    }.value,
     externalDependencyClasspath in RunMarkdown := {
       Classpaths.managedJars(RunMarkdown, (classpathTypes in RunMarkdown).value, update.value)
     },
@@ -160,11 +170,11 @@ object LightbendMarkdown extends AutoPlugin {
       (externalDependencyClasspath in RunMarkdown).value,
 
     target in markdownGenerateAllDocumentation := target.value / "markdown-generated-docs",
-    markdownGenerateAllDocumentation <<= markdownGenerateAllDocumentationSetting,
+    markdownGenerateAllDocumentation := markdownGenerateAllDocumentationSetting.value,
     target in markdownExtractWebJars := target.value / "markdown-webjars",
-    markdownExtractWebJars <<= markdownExtractWebJarsSetting,
+    markdownExtractWebJars := markdownExtractWebJarsSetting.value,
     target in markdownStageSite := target.value / "markdown-site",
-    markdownStageSite <<= markdownStageSiteSetting,
+    markdownStageSite := markdownStageSiteSetting.value,
     markdownStageIncludeWebJars := false,
 
     includeFilter in markdownStageSite := "*"
@@ -175,14 +185,14 @@ object LightbendMarkdown extends AutoPlugin {
 
     markdownEvaluateSbtFiles := {
       val unit = loadedBuild.value.units(thisProjectRef.value.build)
-      val (eval, structure) = Load.defaultLoad(state.value, unit.localBase, state.value.log)
+      val (eval, _) = Load.defaultLoad(state.value, unit.localBase, state.value.log)
       val sbtFiles = ((unmanagedSourceDirectories in Test).value * "*.sbt").get
       val log = state.value.log
       if (sbtFiles.nonEmpty) {
         log.info("Testing .sbt files...")
       }
       val result = sbtFiles.map { sbtFile =>
-        val relativeFile = relativeTo(baseDirectory.value)(sbtFile).getOrElse(sbtFile.getAbsolutePath)
+        val relativeFile = Path.relativeTo(baseDirectory.value)(sbtFile).getOrElse(sbtFile.getAbsolutePath)
         try {
           EvaluateConfigurations.evaluateConfiguration(eval(), sbtFile, unit.imports)(unit.loader)
           log.info(s"  ${Colors.green("+")} $relativeFile")
@@ -281,13 +291,13 @@ object LightbendMarkdown extends AutoPlugin {
     val stageDir = (target in markdownStageSite).value
 
     val allDocsDir = markdownGenerateAllDocumentation.value
-    val generatedDocMappings = allDocsDir.***.filter(!_.isDirectory).get pair rebase(allDocsDir, stageDir)
+    val generatedDocMappings = allDocsDir.allPaths.filter(!_.isDirectory).get pair Path.rebase(allDocsDir, stageDir)
     val docPathMappings = for {
       documentation <- markdownDocumentation.value
       DocPath(path, prefix) <- documentation.docsPaths
       p = if (prefix == ".") "" else if (prefix.endsWith("/")) prefix else prefix + "/"
       files = path.descendantsExcept((includeFilter in markdownStageSite).value, (excludeFilter in markdownStageSite).value).get
-      (file, mapping) <- files.filterNot(_.isDirectory) pair relativeTo(path)
+      (file, mapping) <- files.filterNot(_.isDirectory) pair Path.relativeTo(path)
     } yield {
       val prefixedMapping = p + mapping
       val finalMapping = if (prefixedMapping.startsWith("api/")) {
@@ -299,14 +309,14 @@ object LightbendMarkdown extends AutoPlugin {
     }
     val webJarsDir = markdownExtractWebJars.value
     val webJarMappings = if (markdownStageIncludeWebJars.value) {
-      (webJarsDir.***.filter(!_.isDirectory).get pair relativeTo(webJarsDir)) map {
+      (webJarsDir.allPaths.filter(!_.isDirectory).get pair Path.relativeTo(webJarsDir)) map {
         case (file, path) => file -> stageDir / "webjars" / path
       }
     } else Nil
 
     val allMappings = generatedDocMappings ++ docPathMappings ++ webJarMappings
 
-    Sync(streams.value.cacheDirectory / "markdown-site-cache")(allMappings)
+    Sync.sync(CacheStore.file(streams.value.cacheDirectory / "markdown-site-cache"))(allMappings)
 
     println("Site is staged to " + stageDir)
 
