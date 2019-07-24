@@ -1,5 +1,5 @@
 val runtimeLibrarySettings = Seq(
-  crossScalaVersions := Seq("2.12.8", "2.11.12"),
+  crossScalaVersions := Seq("2.13.0", "2.12.8", "2.11.12"),
   scalaVersion := crossScalaVersions.value.head
 )
 val sbtPluginSettings = Seq(
@@ -7,8 +7,9 @@ val sbtPluginSettings = Seq(
   scalaVersion := crossScalaVersions.value.head
 )
 
-val PlayVersion = "2.7.0"
-val PlayJsonVersion = "2.7.2"
+val PlayVersion = "2.7.3"
+val PlayJsonVersion = "2.7.4"
+val WebJarsLocatorCoreVersion = "0.37"
 
 def playLibrary(name: String): ModuleID =
   "com.typesafe.play" %% name % PlayVersion
@@ -21,7 +22,7 @@ lazy val `lightbend-markdown` = (project in file("."))
   )
   .aggregate(server, plugin, theme)
 
-lazy val playDoc = "com.typesafe.play" %% "play-doc" % "2.0.0"
+lazy val playDoc = "com.typesafe.play" %% "play-doc" % "2.0.2"
 
 lazy val server = (project in file("server"))
   .enablePlugins(SbtTwirl)
@@ -33,8 +34,8 @@ lazy val server = (project in file("server"))
       playLibrary("play-akka-http-server"),
       playLibrary("play-logback"),
       playDoc,
-      "com.github.scopt" %% "scopt" % "3.6.0",
-      "org.webjars" % "webjars-locator-core" % "0.30"
+      "com.github.scopt" %% "scopt" % "3.7.1",
+      "org.webjars" % "webjars-locator-core" % WebJarsLocatorCoreVersion
     )
   )
 
@@ -45,7 +46,7 @@ lazy val plugin = (project in file("plugin"))
     common,
     sbtPluginSettings,
     libraryDependencies ++= Seq(
-      "org.webjars" % "webjars-locator-core" % "0.30",
+      "org.webjars" % "webjars-locator-core" % WebJarsLocatorCoreVersion,
       playDoc,
       "com.typesafe.play" %% "play-json" % PlayJsonVersion
     ),
@@ -59,7 +60,7 @@ lazy val theme = (project in file("theme"))
     common,
     runtimeLibrarySettings,
     libraryDependencies ++= Seq(
-      "org.webjars" % "jquery" % "1.9.0",
+      "org.webjars" % "jquery" % "1.9.1",
       "org.webjars" % "prettify" % "4-Mar-2013"
     ),
     pipelineStages in Assets := Seq(uglify),

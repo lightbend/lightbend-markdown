@@ -1,4 +1,4 @@
-addSbtPlugin("com.typesafe.sbt" % "sbt-twirl" % "1.4.0")
+addSbtPlugin("com.typesafe.sbt" % "sbt-twirl" % "1.4.2")
 
 addSbtPlugin("com.typesafe.sbt" % "sbt-web" % "1.4.4")
 addSbtPlugin("com.typesafe.sbt" % "sbt-less" % "1.1.2")
