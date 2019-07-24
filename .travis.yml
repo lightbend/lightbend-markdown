@@ -1,0 +1,33 @@
+language: scala
+
+scala:
+  - 2.11.12
+  - 2.12.8
+  - 2.13.0
+
+env:
+  - TRAVIS_JDK=8
+  - TRAVIS_JDK=11
+
+before_install: curl -Ls https://git.io/jabba | bash && . ~/.jabba/jabba.sh
+
+install: jabba install "adopt@~1.$TRAVIS_JDK.0-0" && jabba use "$_" && java -Xmx32m -version
+
+matrix:
+  fast_finish: true
+
+script:
+  # Check that we can actually build and package the library
+  - sbt ++$TRAVIS_SCALA_VERSION publishLocal
+
+cache:
+  directories:
+    - "$HOME/.ivy2/cache"
+    - "$HOME/.sbt/boot/"
+    - "$HOME/.jabba/jdk"
+
+before_cache:
+  - rm -rf $HOME/.ivy2/cache/com.lightbend.markdown/*
+  - rm -rf $HOME/.ivy2/cache/scala_*/sbt_*/com.lightbend.markdown/*
+  - find $HOME/.ivy2 -name "ivydata-*.properties" -delete
+  - find $HOME/.sbt -name "*.lock" -delete
