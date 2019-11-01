@@ -79,6 +79,7 @@ def common: Seq[Setting[_]] = Seq(
   bintrayReleaseOnPublish := false,
   publishMavenStyle := false,
 
+  releaseCrossBuild := true,
   releaseProcess := Seq[ReleaseStep](
     checkSnapshotDependencies,
     inquireVersions,
